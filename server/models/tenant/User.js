@@ -7,7 +7,7 @@ const ROLES = ['super_admin', 'hr_manager', 'hr_officer', 'line_manager', 'payro
 
 const schema = new mongoose.Schema({
   name: { type: String, required: true },
-  email: { type: String, required: true, lowercase: true, trim: true, index: true },
+  email: { type: String, required: true, lowercase: true, trim: true, unique: true },
   password: { type: String, required: true, select: false },
   role: { type: String, enum: ROLES, default: 'employee' },
   permissions: { type: [String], default: [] },     // granular grants on top of role
@@ -19,7 +19,6 @@ const schema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 }, { collection: 'users' });
 
-schema.index({ email: 1 }, { unique: true });
 schema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
   this.password = await bcrypt.hash(this.password, 10);

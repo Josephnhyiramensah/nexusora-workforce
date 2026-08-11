@@ -1,27 +1,17 @@
-import LanguageSwitcher from './components/LanguageSwitcher';
-import { useLocale } from './context/LocaleContext';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import Layout from './components/Layout';
+import ProtectedRoute from './components/ProtectedRoute';
+import LoginPage from './pages/LoginPage';
+import HomeScreen from './pages/HomeScreen';
+import EmployeesPage from './pages/EmployeesPage';
 
 export default function App() {
-  const { t, locale, dir } = useLocale();
   return (
-    <div className="app">
-      <header className="app__bar">
-        <strong className="app__brand">{t('app.name')}</strong>
-        <LanguageSwitcher />
-      </header>
-      <main className="app__main">
-        <h1>{t('home.welcome', { app: t('app.name') })}</h1>
-        <p className="app__tagline">{t('app.tagline')}</p>
-        <ul className="nav-demo">
-          <li>{t('nav.home')}</li>
-          <li>{t('nav.employees')}</li>
-          <li>{t('nav.attendance')}</li>
-          <li>{t('nav.leave')}</li>
-          <li>{t('nav.payroll')}</li>
-          <li>{t('nav.reports')}</li>
-        </ul>
-        <p className="meta">{t('home.direction')}: <code>{dir}</code> · locale <code>{locale}</code></p>
-      </main>
-    </div>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={<ProtectedRoute><Layout><HomeScreen /></Layout></ProtectedRoute>} />
+      <Route path="/employees" element={<ProtectedRoute><Layout><EmployeesPage /></Layout></ProtectedRoute>} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }

@@ -1,6 +1,25 @@
 {
   "app": { "name": "Nexusora Workforce", "tagline": "Intelligent HR for African industry & agribusiness" },
-  "common": { "language": "Language", "loading": "Loading…", "save": "Save", "cancel": "Cancel" },
-  "nav": { "home": "Home", "employees": "Employees", "attendance": "Attendance", "leave": "Leave", "payroll": "Payroll", "reports": "Reports" },
-  "home": { "welcome": "Welcome to {app}", "chooseLanguage": "Choose your language", "direction": "Text direction" }
+  "common": { "language": "Language", "loading": "Loading…", "save": "Save", "cancel": "Cancel", "search": "Search", "soon": "Soon" },
+  "auth": { "signIn": "Sign in", "workspace": "Workspace", "email": "Email", "password": "Password", "logout": "Log out", "failed": "Sign in failed" },
+  "home": { "hello": "Hello, {name}", "roleLabel": "Signed in as" },
+  "sections": {
+    "workforce": "Workforce", "talent": "Talent", "operations": "Operations",
+    "payBenefits": "Pay & Benefits", "performanceCulture": "Performance & Culture",
+    "selfService": "Self-Service", "adminAnalytics": "Admin & Analytics"
+  },
+  "tiles": {
+    "workforcePlanning": "Workforce Planning", "employees": "Employee Records", "jobDescriptions": "Job Descriptions",
+    "recruitment": "Recruitment", "onboarding": "Onboarding", "learning": "Learning & Competency", "succession": "Talent & Succession",
+    "attendance": "Attendance & Absenteeism", "leave": "Leave",
+    "payroll": "Compensation & Payroll", "welfare": "Welfare & Social Services",
+    "performance": "Performance", "relations": "Employee Relations", "engagement": "Engagement",
+    "selfService": "Self-Service", "documents": "Documents & Policies", "analytics": "Analytics & Dashboards"
+  },
+  "employees": {
+    "add": "Add employee", "search": "Search employees…", "name": "Name", "jobTitle": "Job title",
+    "workerClass": "Worker class", "type": "Type", "status": "Status", "firstName": "First name", "lastName": "Last name",
+    "department": "Department", "payBasis": "Pay basis", "baseSalary": "Base salary",
+    "none": "No employees yet", "total": "{n} employee(s)", "saveFailed": "Could not save employee"
+  }
 }
