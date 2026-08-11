@@ -1,0 +1,6 @@
+{
+  "app": { "tagline": "RH intelligentes pour l'industrie et l'agro-industrie africaines" },
+  "common": { "language": "Langue", "loading": "Chargement…", "save": "Enregistrer", "cancel": "Annuler" },
+  "nav": { "home": "Accueil", "employees": "Employés", "attendance": "Présence", "leave": "Congés", "payroll": "Paie", "reports": "Rapports" },
+  "home": { "welcome": "Bienvenue sur {app}", "chooseLanguage": "Choisissez votre langue", "direction": "Sens du texte" }
+}

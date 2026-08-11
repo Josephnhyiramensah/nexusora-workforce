@@ -1,0 +1,6 @@
+{
+  "app": { "name": "Nexusora Workforce", "tagline": "Intelligent HR for African industry & agribusiness" },
+  "common": { "language": "Language", "loading": "Loading…", "save": "Save", "cancel": "Cancel" },
+  "nav": { "home": "Home", "employees": "Employees", "attendance": "Attendance", "leave": "Leave", "payroll": "Payroll", "reports": "Reports" },
+  "home": { "welcome": "Welcome to {app}", "chooseLanguage": "Choose your language", "direction": "Text direction" }
+}
