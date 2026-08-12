@@ -12,23 +12,26 @@ export default function EmployeesPage() {
   const [data, setData] = useState({ items: [], total: 0, page: 1, pages: 1 });
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null);   // null = create, object = edit
   const canWrite = WRITE_ROLES.includes(user?.role);
 
   const load = useCallback(async (page = 1) => {
     setLoading(true);
     try { const { data } = await api.get('/employees', { params: { q, page, limit: 10 } }); setData(data); }
-    catch (e) { /* surfaced elsewhere */ }
     finally { setLoading(false); }
   }, [q]);
-
   useEffect(() => { load(1); }, [load]);
+
+  const openCreate = () => { setEditing(null); setFormOpen(true); };
+  const openEdit = (emp) => { if (canWrite) { setEditing(emp); setFormOpen(true); } };
+  const onSaved = () => { setFormOpen(false); setEditing(null); load(data.page || 1); };
 
   return (
     <div className="page">
       <div className="page__head">
         <h1 className="page__title">{t('tiles.employees')}</h1>
-        {canWrite && <button className="btn-primary" onClick={() => setShowForm(true)}>{t('employees.add')}</button>}
+        {canWrite && <button className="btn-primary" onClick={openCreate}>{t('employees.add')}</button>}
       </div>
 
       <div className="toolbar">
@@ -45,17 +48,19 @@ export default function EmployeesPage() {
             <tr>
               <th>{t('employees.name')}</th><th>{t('employees.jobTitle')}</th>
               <th>{t('employees.workerClass')}</th><th>{t('employees.type')}</th><th>{t('employees.status')}</th>
+              {canWrite && <th></th>}
             </tr>
           </thead>
           <tbody>
-            {data.items.length === 0 && <tr><td colSpan="5" className="muted">{t('employees.none')}</td></tr>}
+            {data.items.length === 0 && <tr><td colSpan={canWrite ? 6 : 5} className="muted">{t('employees.none')}</td></tr>}
             {data.items.map((e) => (
-              <tr key={e._id}>
+              <tr key={e._id} className={canWrite ? 'row-click' : ''} onClick={() => openEdit(e)}>
                 <td>{e.firstName} {e.lastName}</td>
                 <td>{e.employment?.jobTitle || '—'}</td>
-                <td>{e.employment?.workerClass || '—'}</td>
-                <td>{e.employment?.employmentType || '—'}</td>
+                <td>{e.employment?.workerClass ? t('wc_' + e.employment.workerClass) : '—'}</td>
+                <td>{e.employment?.employmentType ? t('et_' + e.employment.employmentType) : '—'}</td>
                 <td><span className={`pill pill--${e.status}`}>{e.status}</span></td>
+                {canWrite && <td className="row-edit">{t('common.edit')}</td>}
               </tr>
             ))}
           </tbody>
@@ -63,7 +68,7 @@ export default function EmployeesPage() {
       )}
       <p className="pager">{t('employees.total', { n: data.total })}</p>
 
-      {showForm && <EmployeeForm onClose={() => setShowForm(false)} onCreated={() => { setShowForm(false); load(1); }} />}
+      {formOpen && <EmployeeForm employee={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSaved={onSaved} />}
     </div>
   );
 }
