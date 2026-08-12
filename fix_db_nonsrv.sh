@@ -1,3 +1,9 @@
+#!/usr/bin/env bash
+# Nexusora Workforce - hotfix: db.js supports non-SRV (legacy) Atlas connection strings.
+# Run ONCE from the project root:  bash fix_db_nonsrv.sh
+set -e
+echo "  writing server/config/db.js"
+cat > server/config/db.js << 'NEXUSORA_EOF'
 // Multi-tenant connection factory.
 // Supports BOTH connection-string styles via MONGO_CLUSTER_URI:
 //   - SRV:      mongodb+srv://user:pass@cluster.mongodb.net
@@ -68,3 +74,7 @@ async function getTenantConnection(dbName) {
   return conn;
 }
 module.exports = { connectMaster, getMasterConnection, masterReady, getTenantConnection, uriForDb, parseCluster };
+NEXUSORA_EOF
+
+echo
+echo "db.js updated for non-SRV strings."

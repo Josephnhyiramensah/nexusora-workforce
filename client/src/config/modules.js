@@ -14,7 +14,7 @@ export const SECTIONS = [
     { key: 'succession', roles: ['hr_manager'], enabled: false },
   ]},
   { key: 'operations', tiles: [
-    { key: 'attendance', roles: ['hr_manager', 'hr_officer', 'line_manager'], enabled: false },
+    { key: 'attendance', route: '/attendance', roles: ['hr_manager', 'hr_officer', 'line_manager'], enabled: true },
     { key: 'leave', roles: ['hr_manager', 'hr_officer', 'line_manager', 'employee'], enabled: false },
   ]},
   { key: 'payBenefits', tiles: [

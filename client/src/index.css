@@ -105,3 +105,21 @@ input, select, button { font: inherit; }
 [dir="rtl"] .topbar__tenant { border-right: none; border-left: 1px solid #ffffff33; padding-right: 0; padding-left: 4px; }
 
 @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } .content { padding: 0 16px; } }
+
+/* ---- Phase 2: tabs, KPI cards, inline fields (attendance) ---- */
+.tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.tab { background: none; border: none; padding: 10px 16px; cursor: pointer; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab--on { color: var(--navy); border-bottom-color: var(--gold); }
+
+.field-inline { display: inline-flex; align-items: center; gap: 8px; font-size: .85rem; color: #374151; }
+.field-inline input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; }
+.cell-input { width: 90px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
+.muted-inline { color: var(--muted); }
+.info-note { background: #eef4ff; border: 1px solid #d5e3ff; color: #1e3a67; padding: 9px 12px; border-radius: 9px; font-size: .88rem; margin: 4px 0 14px; }
+.subhead { font-size: .82rem; text-transform: uppercase; letter-spacing: .1em; color: var(--tech-blue); margin: 24px 0 10px; }
+
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 8px; }
+.kpi { display: flex; flex-direction: column; gap: 4px; padding: 18px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.kpi--gold { border-top: 3px solid var(--gold); }
+.kpi__value { font-family: 'Space Grotesk'; font-size: 1.9rem; font-weight: 700; color: var(--navy); line-height: 1; }
+.kpi__label { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }

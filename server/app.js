@@ -52,6 +52,7 @@ app.get('/api/config', (req, res) => {
 app.use('/api/platform', require('./modules/platform/platform.routes'));
 app.use('/api/auth', require('./modules/auth/auth.routes'));
 app.use('/api/employees', require('./modules/employees/employee.routes'));
+app.use('/api/attendance', require('./modules/attendance/attendance.routes'));
 
 app.use(notFound);
 app.use(errorHandler);

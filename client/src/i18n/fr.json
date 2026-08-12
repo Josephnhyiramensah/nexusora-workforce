@@ -1,25 +1,101 @@
 {
-  "app": { "tagline": "RH intelligentes pour l'industrie et l'agro-industrie africaines" },
-  "common": { "language": "Langue", "loading": "Chargement…", "save": "Enregistrer", "cancel": "Annuler", "search": "Rechercher", "soon": "Bientôt" },
-  "auth": { "signIn": "Se connecter", "workspace": "Espace de travail", "email": "E-mail", "password": "Mot de passe", "logout": "Se déconnecter", "failed": "Échec de la connexion" },
-  "home": { "hello": "Bonjour, {name}", "roleLabel": "Connecté en tant que" },
+  "app": {
+    "tagline": "RH intelligentes pour l'industrie et l'agro-industrie africaines"
+  },
+  "common": {
+    "language": "Langue",
+    "loading": "Chargement…",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "search": "Rechercher",
+    "soon": "Bientôt"
+  },
+  "auth": {
+    "signIn": "Se connecter",
+    "workspace": "Espace de travail",
+    "email": "E-mail",
+    "password": "Mot de passe",
+    "logout": "Se déconnecter",
+    "failed": "Échec de la connexion"
+  },
+  "home": {
+    "hello": "Bonjour, {name}",
+    "roleLabel": "Connecté en tant que"
+  },
   "sections": {
-    "workforce": "Effectifs", "talent": "Talents", "operations": "Opérations",
-    "payBenefits": "Paie & Avantages", "performanceCulture": "Performance & Culture",
-    "selfService": "Libre-service", "adminAnalytics": "Administration & Analyses"
+    "workforce": "Effectifs",
+    "talent": "Talents",
+    "operations": "Opérations",
+    "payBenefits": "Paie & Avantages",
+    "performanceCulture": "Performance & Culture",
+    "selfService": "Libre-service",
+    "adminAnalytics": "Administration & Analyses"
   },
   "tiles": {
-    "workforcePlanning": "Planification des effectifs", "employees": "Dossiers du personnel", "jobDescriptions": "Descriptions de poste",
-    "recruitment": "Recrutement", "onboarding": "Intégration", "learning": "Formation & Compétences", "succession": "Talents & Succession",
-    "attendance": "Présence & Absentéisme", "leave": "Congés",
-    "payroll": "Rémunération & Paie", "welfare": "Bien-être & Services sociaux",
-    "performance": "Performance", "relations": "Relations sociales", "engagement": "Engagement",
-    "selfService": "Libre-service", "documents": "Documents & Politiques", "analytics": "Analyses & Tableaux de bord"
+    "workforcePlanning": "Planification des effectifs",
+    "employees": "Dossiers du personnel",
+    "jobDescriptions": "Descriptions de poste",
+    "recruitment": "Recrutement",
+    "onboarding": "Intégration",
+    "learning": "Formation & Compétences",
+    "succession": "Talents & Succession",
+    "attendance": "Présence & Absentéisme",
+    "leave": "Congés",
+    "payroll": "Rémunération & Paie",
+    "welfare": "Bien-être & Services sociaux",
+    "performance": "Performance",
+    "relations": "Relations sociales",
+    "engagement": "Engagement",
+    "selfService": "Libre-service",
+    "documents": "Documents & Politiques",
+    "analytics": "Analyses & Tableaux de bord"
   },
   "employees": {
-    "add": "Ajouter un employé", "search": "Rechercher des employés…", "name": "Nom", "jobTitle": "Intitulé du poste",
-    "workerClass": "Catégorie", "type": "Type", "status": "Statut", "firstName": "Prénom", "lastName": "Nom",
-    "department": "Département", "payBasis": "Base de paie", "baseSalary": "Salaire de base",
-    "none": "Aucun employé pour l'instant", "total": "{n} employé(s)", "saveFailed": "Enregistrement impossible"
+    "add": "Ajouter un employé",
+    "search": "Rechercher des employés…",
+    "name": "Nom",
+    "jobTitle": "Intitulé du poste",
+    "workerClass": "Catégorie",
+    "type": "Type",
+    "status": "Statut",
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "department": "Département",
+    "payBasis": "Base de paie",
+    "baseSalary": "Salaire de base",
+    "none": "Aucun employé pour l'instant",
+    "total": "{n} employé(s)",
+    "saveFailed": "Enregistrement impossible"
+  },
+  "attendance": {
+    "muster": "Appel journalier",
+    "absenteeism": "Absentéisme",
+    "date": "Date",
+    "from": "Du",
+    "to": "Au",
+    "departmentFilter": "Département (facultatif)",
+    "loadCrew": "Charger l’équipe",
+    "saveMuster": "Enregistrer l’appel",
+    "loadHint": "Choisissez une date et chargez l’équipe pour saisir les présences.",
+    "noCrew": "Aucun employé actif pour ce filtre.",
+    "status": "Statut",
+    "output": "Production (kg)",
+    "musterSaved": "Appel enregistré pour {n} travailleur(s)",
+    "saveFailed": "Enregistrement impossible",
+    "lostManDays": "Jours-homme perdus",
+    "absenteeismRate": "Taux d’absentéisme",
+    "scheduledManDays": "Jours-homme prévus",
+    "absences": "Absences",
+    "byDepartment": "Par département",
+    "rate": "Taux",
+    "chronic": "Absentéistes chroniques",
+    "noData": "Aucune donnée pour cette période",
+    "status_present": "Présent",
+    "status_absent": "Absent",
+    "status_late": "En retard",
+    "status_half_day": "Demi-journée",
+    "status_leave": "Congé",
+    "status_rest_day": "Repos",
+    "status_holiday": "Jour férié"
   }
 }

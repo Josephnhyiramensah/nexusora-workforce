@@ -4,6 +4,7 @@ function registerAllModels(conn) {
     require('./tenant/User'),
     require('./tenant/CompliancePack'),
     require('./tenant/Employee'),
+    require('./tenant/Attendance'),
     // ...more tenant models added here as modules are built
   ];
   for (const def of defs) {
