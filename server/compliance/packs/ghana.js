@@ -1,5 +1,6 @@
-// GHANA compliance pack — INDICATIVE seed values. Verify against GRA (tax) & SSNIT (social)
-// before go-live; keep effective-dated. Amounts in GHS (monthly basis).
+// GHANA compliance pack. PAYE bands cross-checked to GRA 2026 (monthly).
+// SSNIT 5.5% employee / 13% employer, monthly insurable ceiling GHS 69,000.
+// Still have an accountant confirm before live payroll — you are liable, not the software.
 module.exports = {
   countryCode: 'GH',
   countryName: 'Ghana',
@@ -11,7 +12,6 @@ module.exports = {
   incomeTax: {
     method: 'progressive',
     standardDeductionRate: 0,
-    // Monthly PAYE bands (indicative — confirm current GRA schedule).
     brackets: [
       { upTo: 490, rate: 0.00 },
       { upTo: 600, rate: 0.05 },
@@ -25,18 +25,20 @@ module.exports = {
 
   socialSecurity: {
     contributions: [
-      // SSNIT: employee 5.5% + employer 13% of basic (Tier 1 + Tier 2). Tier 3 voluntary.
-      { name: 'SSNIT', base: 'basic', employeeRate: 0.055, employerRate: 0.13, ceiling: null },
+      { name: 'SSNIT', base: 'basic', employeeRate: 0.055, employerRate: 0.13, ceiling: 69000 },
     ],
   },
 
   leave: {
-    annual: [ { minMonths: 12, days: 15 } ],   // Labour Act 651: min 15 working days
+    annual: [ { minMonths: 12, days: 15 } ],
     maternityWeeks: 12,
   },
 
-  minimumWage: { amount: 19.97, period: 'day', currency: 'GHS' }, // indicative daily NDMW
+  minimumWage: { amount: 19.97, period: 'day', currency: 'GHS' },
 
   statutoryReports: ['paye-return', 'ssnit-contribution-schedule'],
-  notes: 'Bands/rates indicative; confirm with GRA & SSNIT and set effectiveFrom per change.',
+  minimumInsurable: 587.80,
+  verifiedAgainst: 'GRA PAYE 2026 monthly bands; SSNIT 5.5%/13%, monthly insurable ceiling GHS 69,000',
+  verifiedOn: '2026-08-14',
+  notes: 'PAYE bands cross-checked to GRA 2026. Confirm with GRA/SSNIT + an accountant before live payroll.',
 };

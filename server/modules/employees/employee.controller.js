@@ -1,11 +1,74 @@
 const asyncHandler = require('express-async-handler');
+const cloudinary = require('../../config/cloudinary');
+const ExcelJS = require('exceljs');
+const { Readable } = require('stream');
+
+/* ------------------------------------------------------------------ *
+ *  Effective-dated history helpers.
+ *  On every employee update we diff the old vs new job/compensation
+ *  fields and write an EmployeeChange record per changed category.
+ *  The live Employee doc keeps its current values (unchanged behaviour).
+ * ------------------------------------------------------------------ */
+const getPath = (o, p) => p.split('.').reduce((a, k) => (a == null ? undefined : a[k]), o);
+
+const normVal = (v, type) => {
+  if (v === undefined || v === null || v === '') return '';
+  if (type === 'date') { const d = new Date(v); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10); }
+  if (type === 'number') { const n = Number(v); return isNaN(n) ? '' : String(n); }
+  return String(v).trim();
+};
+
+const JOB_FIELDS = [
+  ['employment.jobTitle', 'Job title', 'text'],
+  ['employment.department', 'Department', 'text'],
+  ['employment.section', 'Section', 'text'],
+  ['employment.grade', 'Grade', 'text'],
+  ['employment.workerClass', 'Worker class', 'text'],
+  ['employment.employmentType', 'Employment type', 'text'],
+  ['employment.costCentre', 'Cost centre', 'text'],
+  ['employment.crew', 'Crew', 'text'],
+  ['employment.confirmationStatus', 'Confirmation status', 'text'],
+  ['employment.startDate', 'Start date', 'date'],
+];
+const COMP_FIELDS = [
+  ['compensation.payBasis', 'Pay basis', 'text'],
+  ['compensation.currency', 'Currency', 'text'],
+  ['compensation.baseSalary', 'Base salary', 'number'],
+  ['compensation.dailyRate', 'Daily rate', 'number'],
+  ['compensation.hourlyRate', 'Hourly rate', 'number'],
+  ['compensation.pieceRate.amount', 'Piece rate amount', 'number'],
+  ['compensation.pieceRate.unit', 'Piece rate unit', 'text'],
+];
+
+function diffFields(prev, next, specs) {
+  const changes = [];
+  for (const [field, label, type] of specs) {
+    const from = normVal(getPath(prev, field), type);
+    const to = normVal(getPath(next, field), type);
+    if (from !== to) changes.push({ field, label, from, to });
+  }
+  return changes;
+}
+
+function buildChangeEvents(prev, next, employee, effectiveDate, changedBy, note) {
+  const events = [];
+  const job = diffFields(prev, next, JOB_FIELDS);
+  if (job.length) events.push({ employee, category: 'job', effectiveDate, changes: job, snapshot: next.employment || {}, note, changedBy });
+  const comp = diffFields(prev, next, COMP_FIELDS);
+  if (comp.length) events.push({ employee, category: 'compensation', effectiveDate, changes: comp, snapshot: next.compensation || {}, note, changedBy });
+  return events;
+}
+
+/* ------------------------------------------------------------------ */
 
 const list = asyncHandler(async (req, res) => {
   const Employee = req.tenantConn.model('Employee');
-  const { q, department, status, page = 1, limit = 25 } = req.query;
+  const { q, department, status, manager, page = 1, limit = 25 } = req.query;
   const filter = {};
   if (status) filter.status = status;
   if (department) filter['employment.department'] = department;
+  // Direct-reports lookup for the org chart: GET /employees?manager=<employeeId>
+  if (manager) filter['employment.lineManager'] = manager;
   if (q) {
     const rx = new RegExp(String(q).trim(), 'i');
     filter.$or = [{ firstName: rx }, { lastName: rx }, { staffId: rx }, { email: rx }];
@@ -20,7 +83,16 @@ const list = asyncHandler(async (req, res) => {
 });
 
 const getById = asyncHandler(async (req, res) => {
-  const e = await req.tenantConn.model('Employee').findById(req.params.id);
+  const Employee = req.tenantConn.model('Employee');
+  // Ensure referenced models are registered on this connection before populate.
+  req.tenantConn.model('Position');
+  req.tenantConn.model('OrgUnit');
+  const e = await Employee.findById(req.params.id)
+    .populate('employment.positionId', 'title code')
+    // Widened so the org chart's manager node can show an avatar + title.
+    .populate('employment.lineManager', 'firstName lastName photo employment.jobTitle')
+    .populate('employment.departmentId', 'name code')
+    .populate('employment.sectionId', 'name code');
   if (!e) return res.status(404).json({ message: 'Employee not found' });
   res.json(e);
 });
@@ -34,19 +106,388 @@ const create = asyncHandler(async (req, res) => {
 });
 
 const update = asyncHandler(async (req, res) => {
-  const e = await req.tenantConn.model('Employee').findByIdAndUpdate(
+  const Employee = req.tenantConn.model('Employee');
+  const EmployeeChange = req.tenantConn.model('EmployeeChange');
+
+  // Snapshot BEFORE for the diff.
+  const before = await Employee.findById(req.params.id);
+  if (!before) return res.status(404).json({ message: 'Employee not found' });
+  const prev = before.toObject();
+
+  // effectiveDate / changeNote are history metadata — never written to the Employee doc.
+  const { effectiveDate, changeNote, ...body } = req.body;
+
+  const updated = await Employee.findByIdAndUpdate(
     req.params.id,
-    { ...req.body, updatedAt: new Date() },
+    { ...body, updatedAt: new Date() },
     { new: true, runValidators: true },
   );
-  if (!e) return res.status(404).json({ message: 'Employee not found' });
+  const next = updated.toObject();
+
+  // Effective-dated history — must never block the actual save.
+  try {
+    const effDate = effectiveDate ? new Date(effectiveDate) : new Date();
+    const who = req.auth?.userId || '';
+    const events = buildChangeEvents(prev, next, req.params.id, effDate, who, changeNote || '');
+    if (events.length) await EmployeeChange.insertMany(events);
+  } catch (e) { /* history logging is best-effort; a save must still succeed */ }
+
+  res.json(updated);
+});
+
+// GET /employees/:id/history?category=job|compensation
+const history = asyncHandler(async (req, res) => {
+  const EmployeeChange = req.tenantConn.model('EmployeeChange');
+  const filter = { employee: req.params.id };
+  if (req.query.category) filter.category = req.query.category;
+  const items = await EmployeeChange.find(filter).sort({ effectiveDate: -1, changedAt: -1 });
+  res.json({ items, total: items.length });
+});
+
+/* ------------------------------------------------------------------ *
+ *  Self-service: resolve the CALLER's own employee record.
+ *  Linked via User.employee; falls back to email match. These endpoints
+ *  return only the signed-in user's own data, so they are safe for the
+ *  'employee' role that cannot read the general /employees list.
+ * ------------------------------------------------------------------ */
+async function resolveMyEmployeeId(req) {
+  const User = req.tenantConn.model('User');
+  const Employee = req.tenantConn.model('Employee');
+  const u = await User.findById(req.auth.userId).select('employee email');
+  if (u?.employee) return u.employee;
+  if (u?.email) {
+    const doc = await Employee.findOne({ email: u.email }).select('_id');
+    if (doc) return doc._id;
+  }
+  return null;
+}
+
+// GET /employees/me — the signed-in user's own employee record (populated).
+const getMe = asyncHandler(async (req, res) => {
+  const Employee = req.tenantConn.model('Employee');
+  req.tenantConn.model('Position');
+  req.tenantConn.model('OrgUnit');
+  const myId = await resolveMyEmployeeId(req);
+  if (!myId) return res.status(404).json({ message: 'No employee record is linked to your account.' });
+  const e = await Employee.findById(myId)
+    .populate('employment.positionId', 'title code')
+    .populate('employment.lineManager', 'firstName lastName photo employment.jobTitle')
+    .populate('employment.departmentId', 'name code')
+    .populate('employment.sectionId', 'name code');
+  if (!e) return res.status(404).json({ message: 'No employee record is linked to your account.' });
   res.json(e);
 });
 
-const deactivate = asyncHandler(async (req, res) => {
-  const e = await req.tenantConn.model('Employee').findByIdAndUpdate(req.params.id, { status: 'terminated', updatedAt: new Date() }, { new: true });
-  if (!e) return res.status(404).json({ message: 'Employee not found' });
-  res.json({ message: 'Employee deactivated', employee: e });
+// GET /employees/me/team — the signed-in user's direct reports.
+const myTeam = asyncHandler(async (req, res) => {
+  const Employee = req.tenantConn.model('Employee');
+  const myId = await resolveMyEmployeeId(req);
+  if (!myId) return res.json({ items: [], total: 0 });
+  const items = await Employee.find({ 'employment.lineManager': myId }).sort({ firstName: 1, lastName: 1 });
+  res.json({ items, total: items.length });
 });
 
-module.exports = { list, getById, create, update, deactivate };
+// GET /employees/me/leave — my leave types (for the request form), my requests,
+// and days taken by type this year. Full entitlement/remaining balance is wired
+// to the leave engine separately.
+const getMyLeave = asyncHandler(async (req, res) => {
+  const LeaveRequest = req.tenantConn.model('LeaveRequest');
+  const LeaveType = req.tenantConn.model('LeaveType');
+  const myId = await resolveMyEmployeeId(req);
+  if (!myId) return res.status(404).json({ message: 'No employee record is linked to your account.' });
+
+  const [types, requests] = await Promise.all([
+    LeaveType.find({ active: true }).sort({ name: 1 }),
+    LeaveRequest.find({ employee: myId }).populate('leaveType', 'name code color paid').sort({ startDate: -1 }),
+  ]);
+
+  const year = new Date().getFullYear();
+  const tally = {};
+  for (const r of requests) {
+    if (r.status !== 'approved') continue;
+    if (new Date(r.startDate).getFullYear() !== year) continue;
+    const key = r.leaveType?.name || 'Other';
+    tally[key] = (tally[key] || 0) + (r.days || 0);
+  }
+  const takenByType = Object.entries(tally).map(([type, days]) => ({ type, days }));
+  const pendingCount = requests.filter((r) => r.status === 'pending').length;
+
+  res.json({ types, requests, takenByType, pendingCount });
+});
+
+// POST /employees/me/leave — submit a leave request for myself (goes to 'pending').
+const submitMyLeave = asyncHandler(async (req, res) => {
+  const LeaveRequest = req.tenantConn.model('LeaveRequest');
+  const myId = await resolveMyEmployeeId(req);
+  if (!myId) return res.status(404).json({ message: 'No employee record is linked to your account.' });
+
+  const { leaveType, startDate, endDate, reason } = req.body;
+  if (!leaveType || !startDate || !endDate) {
+    return res.status(400).json({ message: 'Leave type, start date and end date are required.' });
+  }
+  const s = new Date(startDate);
+  const e = new Date(endDate);
+  if (isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) {
+    return res.status(400).json({ message: 'Please provide a valid date range.' });
+  }
+  // Working-days count (Mon–Fri, inclusive). The leave engine may refine this on approval.
+  let days = 0;
+  for (const d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) days += 1;
+  }
+
+  const doc = await LeaveRequest.create({
+    employee: myId, leaveType, startDate: s, endDate: e, days,
+    reason: reason || '', status: 'pending', createdBy: req.auth.userId,
+  });
+  await doc.populate('leaveType', 'name code color paid');
+  res.status(201).json(doc);
+});
+
+// GET /employees/me/payslips — my payslips from approved/paid runs.
+// payslips[] is engine output (Mixed), so we match on the common identity keys.
+const getMyPayslips = asyncHandler(async (req, res) => {
+  const PayrollRun = req.tenantConn.model('PayrollRun');
+  const Employee = req.tenantConn.model('Employee');
+  const myId = await resolveMyEmployeeId(req);
+  if (!myId) return res.status(404).json({ message: 'No employee record is linked to your account.' });
+
+  const meDoc = await Employee.findById(myId).select('staffId');
+  const myStr = String(myId);
+  const staffId = meDoc?.staffId;
+
+  const matchesMe = (p) => {
+    if (!p || typeof p !== 'object') return false;
+    const ids = [p.employee, p.employeeId, p.empId, p.id, p.employee && p.employee._id]
+      .filter((x) => x != null).map((x) => String(x));
+    if (ids.includes(myStr)) return true;
+    if (staffId && (p.staffId === staffId || p.staffNo === staffId || p.staff_id === staffId)) return true;
+    return false;
+  };
+
+  const runs = await PayrollRun.find({ status: { $in: ['approved', 'paid'] } }).sort({ period: -1 });
+  const items = [];
+  for (const run of runs) {
+    const slip = (run.payslips || []).find(matchesMe);
+    if (slip) items.push({ runId: run._id, period: run.period, label: run.label, status: run.status, currency: run.currency, payslip: slip });
+  }
+  res.json({ items, total: items.length });
+});
+
+// GET /employees/me/attendance — my recent attendance rows.
+const getMyAttendance = asyncHandler(async (req, res) => {
+  const Attendance = req.tenantConn.model('Attendance');
+  const myId = await resolveMyEmployeeId(req);
+  if (!myId) return res.status(404).json({ message: 'No employee record is linked to your account.' });
+  const items = await Attendance.find({ employee: myId }).sort({ date: -1 }).limit(60);
+  res.json({ items, total: items.length });
+});
+
+const deactivate = asyncHandler(async (req, res) => {
+  const { terminationDate, terminationReason } = req.body || {};
+  const patch = {
+    status: 'terminated',
+    updatedAt: new Date(),
+    'employment.confirmationStatus': 'exited',
+    'employment.terminationDate': terminationDate ? new Date(terminationDate) : new Date(),
+  };
+  if (terminationReason) patch['employment.terminationReason'] = terminationReason;
+  const e = await req.tenantConn.model('Employee').findByIdAndUpdate(req.params.id, patch, { new: true });
+  if (!e) return res.status(404).json({ message: 'Employee not found' });
+  res.json({ message: 'Employee offboarded', employee: e });
+});
+
+/* ------------------------------------------------------------------ *
+ *  Bulk import — POST /employees/import (xlsx/csv).
+ *  Header row maps friendly column names to employee fields; each data
+ *  row becomes an employee. Reports created / skipped / row errors.
+ * ------------------------------------------------------------------ */
+const IMPORT_MAP = {
+  'firstname': 'firstName', 'first name': 'firstName', 'first': 'firstName',
+  'lastname': 'lastName', 'last name': 'lastName', 'surname': 'lastName', 'last': 'lastName',
+  'staffid': 'staffId', 'staff id': 'staffId', 'staff no': 'staffId', 'employee id': 'staffId',
+  'gender': 'gender', 'sex': 'gender',
+  'dateofbirth': 'dateOfBirth', 'date of birth': 'dateOfBirth', 'dob': 'dateOfBirth', 'birth date': 'dateOfBirth',
+  'nationalid': 'nationalId', 'national id': 'nationalId', 'ghana card': 'nationalId', 'id number': 'nationalId',
+  'email': 'email', 'e-mail': 'email',
+  'phone': 'phone', 'mobile': 'phone', 'telephone': 'phone', 'contact': 'phone',
+  'address': 'address',
+  'jobtitle': 'employment.jobTitle', 'job title': 'employment.jobTitle', 'position': 'employment.jobTitle', 'designation': 'employment.jobTitle',
+  'department': 'employment.department', 'dept': 'employment.department',
+  'section': 'employment.section', 'estate': 'employment.section',
+  'workerclass': 'employment.workerClass', 'worker class': 'employment.workerClass', 'class': 'employment.workerClass',
+  'employmenttype': 'employment.employmentType', 'employment type': 'employment.employmentType', 'type': 'employment.employmentType',
+  'grade': 'employment.grade',
+  'startdate': 'employment.startDate', 'start date': 'employment.startDate', 'date joined': 'employment.startDate', 'hire date': 'employment.startDate',
+  'paybasis': 'compensation.payBasis', 'pay basis': 'compensation.payBasis',
+  'currency': 'compensation.currency',
+  'basesalary': 'compensation.baseSalary', 'base salary': 'compensation.baseSalary', 'salary': 'compensation.baseSalary', 'monthly salary': 'compensation.baseSalary',
+  'dailyrate': 'compensation.dailyRate', 'daily rate': 'compensation.dailyRate',
+  'hourlyrate': 'compensation.hourlyRate', 'hourly rate': 'compensation.hourlyRate',
+};
+const NUM_PATHS = new Set(['compensation.baseSalary', 'compensation.dailyRate', 'compensation.hourlyRate']);
+const DATE_PATHS = new Set(['dateOfBirth', 'employment.startDate']);
+
+function setPath(obj, path, val) {
+  const keys = path.split('.'); let o = obj;
+  for (let i = 0; i < keys.length - 1; i++) { o[keys[i]] = o[keys[i]] || {}; o = o[keys[i]]; }
+  o[keys[keys.length - 1]] = val;
+}
+function cellText(v) {
+  if (v == null) return '';
+  if (v instanceof Date) return v;
+  if (typeof v === 'object') {
+    if (v.text != null) return String(v.text).trim();       // rich text / hyperlink
+    if (v.result != null) return v.result;                  // formula result
+    return String(v).trim();
+  }
+  return String(v).trim();
+}
+
+const importEmployees = asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'No file uploaded (field name must be "file").' });
+  const Employee = req.tenantConn.model('Employee');
+  const wb = new ExcelJS.Workbook();
+  const fname = (req.file.originalname || '').toLowerCase();
+  try {
+    if (fname.endsWith('.csv')) await wb.csv.read(Readable.from(req.file.buffer.toString('utf8')));
+    else await wb.xlsx.load(req.file.buffer);
+  } catch (e) {
+    return res.status(400).json({ message: 'Could not read the file. Upload a valid .xlsx or .csv.' });
+  }
+  const ws = wb.worksheets[0];
+  if (!ws) return res.status(400).json({ message: 'The file has no sheet or rows.' });
+
+  const colPath = {};
+  ws.getRow(1).eachCell((cell, col) => {
+    const key = String(cellText(cell) || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const path = IMPORT_MAP[key] || IMPORT_MAP[key.replace(/ /g, '')];
+    if (path) colPath[col] = path;
+  });
+  const paths = Object.values(colPath);
+  if (!paths.includes('firstName') || !paths.includes('lastName')) {
+    return res.status(400).json({ message: 'The sheet must have "First Name" and "Last Name" columns. Download the template and use those headers.' });
+  }
+
+  const docs = [];
+  const errors = [];
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const row = ws.getRow(r);
+    if (!row || row.actualCellCount === 0) continue;
+    const emp = {};
+    for (const [col, path] of Object.entries(colPath)) {
+      let val = cellText(row.getCell(Number(col)));
+      if (val === '' || val == null) continue;
+      if (NUM_PATHS.has(path)) { const n = Number(String(val).replace(/[, ]/g, '')); if (isNaN(n)) continue; val = n; }
+      else if (DATE_PATHS.has(path)) { const d = (val instanceof Date) ? val : new Date(val); if (isNaN(d.getTime())) continue; val = d; }
+      setPath(emp, path, val);
+    }
+    if (!emp.firstName || !emp.lastName) {
+      if (Object.keys(emp).length) errors.push({ row: r, error: 'Missing first or last name' });
+      continue;
+    }
+    if (emp.compensation && !emp.compensation.currency) emp.compensation.currency = req.tenant.baseCurrency;
+    emp.createdAt = new Date();
+    docs.push(emp);
+  }
+
+  let created = 0;
+  if (docs.length) {
+    try {
+      const inserted = await Employee.insertMany(docs, { ordered: false });
+      created = inserted.length;
+    } catch (e) {
+      created = (e && Array.isArray(e.insertedDocs)) ? e.insertedDocs.length : 0;
+      if (e && Array.isArray(e.writeErrors)) {
+        e.writeErrors.slice(0, 50).forEach((we) => errors.push({ row: '—', error: (we.err && we.err.errmsg) || we.errmsg || 'insert failed' }));
+      }
+    }
+  }
+  res.json({ total: created + errors.length, created, skipped: errors.length, errors: errors.slice(0, 100) });
+});
+
+function uploadBuffer(buffer, { folder, resourceType = 'auto' }) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: resourceType },
+      (err, result) => (err ? reject(err) : resolve(result)),
+    );
+    stream.end(buffer);
+  });
+}
+
+const uploadDocument = asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'No file uploaded (field name must be "file").' });
+  const Employee = req.tenantConn.model('Employee');
+  const emp = await Employee.findById(req.params.id);
+  if (!emp) return res.status(404).json({ message: 'Employee not found' });
+
+  const folder = `workforce/${req.auth.tenant}/employees/${emp._id}/documents`;
+  const result = await uploadBuffer(req.file.buffer, { folder, resourceType: 'auto' });
+
+  const doc = {
+    name: req.body.name || req.file.originalname || 'Document',
+    type: req.body.type || 'other',
+    url: result.secure_url,
+    publicId: result.public_id,
+    format: result.format || (req.file.mimetype || '').split('/')[1] || '',
+    bytes: result.bytes || req.file.size || 0,
+    uploadedAt: new Date(),
+    uploadedBy: req.auth.userId || '',
+  };
+  emp.documents.push(doc);
+  emp.updatedAt = new Date();
+  await emp.save();
+  res.status(201).json({ message: 'Document uploaded', documents: emp.documents });
+});
+
+const deleteDocument = asyncHandler(async (req, res) => {
+  const Employee = req.tenantConn.model('Employee');
+  const emp = await Employee.findById(req.params.id);
+  if (!emp) return res.status(404).json({ message: 'Employee not found' });
+
+  const doc = emp.documents.id(req.params.docId);
+  if (!doc) return res.status(404).json({ message: 'Document not found' });
+
+  if (doc.publicId) {
+    try {
+      await cloudinary.uploader.destroy(doc.publicId, { resource_type: 'raw' });
+      await cloudinary.uploader.destroy(doc.publicId, { resource_type: 'image' });
+    } catch (e) { /* ignore — record removal is the source of truth */ }
+  }
+  doc.deleteOne();
+  emp.updatedAt = new Date();
+  await emp.save();
+  res.json({ message: 'Document removed', documents: emp.documents });
+});
+
+const uploadPhoto = asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'No file uploaded (field name must be "file").' });
+  if (!(req.file.mimetype || '').startsWith('image/')) {
+    return res.status(400).json({ message: 'Photo must be an image file.' });
+  }
+  const Employee = req.tenantConn.model('Employee');
+  const emp = await Employee.findById(req.params.id);
+  if (!emp) return res.status(404).json({ message: 'Employee not found' });
+
+  const folder = `workforce/${req.auth.tenant}/employees/${emp._id}/photo`;
+  const result = await new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        resource_type: 'image',
+        transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }],
+      },
+      (err, r) => (err ? reject(err) : resolve(r)),
+    );
+    stream.end(req.file.buffer);
+  });
+
+  emp.photo = result.secure_url;
+  emp.updatedAt = new Date();
+  await emp.save();
+  res.json({ message: 'Photo updated', photo: emp.photo });
+});
+
+module.exports = { list, getById, getMe, myTeam, getMyLeave, submitMyLeave, getMyPayslips, getMyAttendance, create, update, history, deactivate, importEmployees, uploadDocument, deleteDocument, uploadPhoto };

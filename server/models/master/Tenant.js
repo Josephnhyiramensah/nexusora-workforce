@@ -15,6 +15,7 @@ const schema = new mongoose.Schema({
   plan: { type: String, enum: ['starter', 'professional', 'enterprise'], default: 'starter' },
   status: { type: String, enum: ['active', 'suspended', 'trial', 'expired'], default: 'trial' },
   modules: { type: [String], default: [] },
+  branding: { type: mongoose.Schema.Types.Mixed, default: {} },
   createdAt: { type: Date, default: Date.now },
 }, { minimize: false, collection: 'tenants' });
 

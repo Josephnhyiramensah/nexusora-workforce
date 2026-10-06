@@ -3,35 +3,35 @@
 // is listed, or the tile is 'all', or the user is super_admin (who sees everything).
 export const SECTIONS = [
   { key: 'workforce', tiles: [
-    { key: 'workforcePlanning', roles: ['hr_manager'], enabled: false },
-    { key: 'employees', route: '/employees', roles: ['hr_manager', 'hr_officer', 'line_manager', 'payroll_officer', 'viewer'], enabled: true },
-    { key: 'jobDescriptions', roles: ['hr_manager'], enabled: false },
+    { key: 'workforcePlanning', icon: 'ClipboardList', accent: '#123a7e', roles: ['hr_manager'], enabled: false },
+    { key: 'employees', icon: 'Users', accent: '#012158', route: '/employees', roles: ['hr_manager', 'hr_officer', 'line_manager', 'payroll_officer', 'viewer'], enabled: true },
+    { key: 'jobDescriptions', icon: 'FileText', accent: '#17a2b8', roles: ['hr_manager'], enabled: false },
   ]},
   { key: 'talent', tiles: [
-    { key: 'recruitment', roles: ['hr_manager', 'hr_officer'], enabled: false },
-    { key: 'onboarding', roles: ['hr_manager', 'hr_officer'], enabled: false },
-    { key: 'learning', roles: ['hr_manager', 'hr_officer'], enabled: false },
-    { key: 'succession', roles: ['hr_manager'], enabled: false },
+    { key: 'recruitment', icon: 'UserPlus', accent: '#e5484d', roles: ['hr_manager', 'hr_officer'], enabled: false },
+    { key: 'onboarding', icon: 'LogIn', accent: '#7c5cdf', roles: ['hr_manager', 'hr_officer'], enabled: false },
+    { key: 'learning', icon: 'GraduationCap', accent: '#1f9d57', roles: ['hr_manager', 'hr_officer'], enabled: false },
+    { key: 'succession', icon: 'GitBranch', accent: '#f08a00', roles: ['hr_manager'], enabled: false },
   ]},
   { key: 'operations', tiles: [
-    { key: 'attendance', route: '/attendance', roles: ['hr_manager', 'hr_officer', 'line_manager'], enabled: true },
-    { key: 'leave', roles: ['hr_manager', 'hr_officer', 'line_manager', 'employee'], enabled: false },
+    { key: 'attendance', icon: 'CalendarCheck', accent: '#3485E9', route: '/attendance', roles: ['hr_manager', 'hr_officer', 'line_manager'], enabled: true },
+    { key: 'leave', icon: 'CalendarDays', accent: '#7c5cdf', route: '/leave', roles: ['hr_manager', 'hr_officer', 'line_manager', 'employee'], enabled: true },
   ]},
   { key: 'payBenefits', tiles: [
-    { key: 'payroll', roles: ['payroll_officer', 'hr_manager'], enabled: false },
-    { key: 'welfare', roles: ['hr_manager'], enabled: false },
+    { key: 'payroll', icon: 'Wallet', accent: '#1f9d57', roles: ['payroll_officer', 'hr_manager'], enabled: false },
+    { key: 'welfare', icon: 'HeartHandshake', accent: '#e5484d', roles: ['hr_manager'], enabled: false },
   ]},
   { key: 'performanceCulture', tiles: [
-    { key: 'performance', roles: ['hr_manager', 'line_manager'], enabled: false },
-    { key: 'relations', roles: ['hr_manager', 'ir_officer'], enabled: false },
-    { key: 'engagement', roles: ['hr_manager'], enabled: false },
+    { key: 'performance', icon: 'TrendingUp', accent: '#17a2b8', roles: ['hr_manager', 'line_manager'], enabled: false },
+    { key: 'relations', icon: 'Scale', accent: '#012158', roles: ['hr_manager', 'ir_officer'], enabled: false },
+    { key: 'engagement', icon: 'MessagesSquare', accent: '#f08a00', roles: ['hr_manager'], enabled: false },
   ]},
-  { key: 'selfService', tiles: [
+  { key: 'selfService', icon: 'CircleUser', accent: '#3485E9', tiles: [
     { key: 'selfService', roles: ['all'], enabled: false },
   ]},
   { key: 'adminAnalytics', tiles: [
-    { key: 'documents', roles: ['hr_manager', 'hr_officer'], enabled: false },
-    { key: 'analytics', roles: ['hr_manager'], enabled: false },
+    { key: 'documents', icon: 'FolderOpen', accent: '#123a7e', roles: ['hr_manager', 'hr_officer'], enabled: false },
+    { key: 'analytics', icon: 'ChartColumn', accent: '#7c5cdf', roles: ['hr_manager'], enabled: false },
   ]},
 ];
 

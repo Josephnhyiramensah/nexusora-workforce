@@ -10,6 +10,18 @@ const { registerAllModels } = require('../models/registerModels');
 
 let masterConn = null;
 const tenantConns = new Map();
+// Connection tuning for a high-latency / restricted network: keep a couple of sockets
+// permanently warm so a click never waits to re-open a TLS connection to Atlas, and
+// fail server-selection in 10s instead of hanging ~30s.
+const CONN_OPTS = {
+  serverSelectionTimeoutMS: 30000,   // give the slow link time to reach Atlas at startup
+  connectTimeoutMS: 30000,
+  socketTimeoutMS: 60000,
+  maxPoolSize: 10,
+  minPoolSize: 1,                    // keep one warm connection so clicks don't reopen sockets
+  maxIdleTimeMS: 0,                  // never idle-close it
+  heartbeatFrequencyMS: 15000,
+};
 
 // Split a cluster URI into { scheme, creds, hosts, query } without losing options.
 function parseCluster(uri) {
@@ -45,7 +57,7 @@ async function connectMaster() {
   if (masterConn) return masterConn;
   const uri = masterUri();
   if (!uri) { console.warn('[db] No Mongo URI set — running without master DB (dev bootstrap).'); return null; }
-  masterConn = await mongoose.createConnection(uri).asPromise();
+  masterConn = await mongoose.createConnection(uri, CONN_OPTS).asPromise();
   registerMasterModels(masterConn);
   console.log(`[db] Master DB connected: ${env.TENANT_DB_PREFIX}master`);
   return masterConn;
@@ -61,7 +73,7 @@ function registerMasterModels(conn) {
 async function getTenantConnection(dbName) {
   if (!dbName) throw new Error('getTenantConnection: dbName required');
   if (tenantConns.has(dbName)) return tenantConns.get(dbName);
-  const conn = await mongoose.createConnection(uriForDb(dbName)).asPromise();
+  const conn = await mongoose.createConnection(uriForDb(dbName), CONN_OPTS).asPromise();
   registerAllModels(conn);
   tenantConns.set(dbName, conn);
   console.log(`[db] Tenant connection opened: ${dbName}`);

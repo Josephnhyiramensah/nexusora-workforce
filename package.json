@@ -1,5 +1,8 @@
 {
   "dependencies": {
-    "mongodb": "^7.5.0"
+    "lucide-react": "^1.31.0",
+    "mongodb": "^7.5.0",
+    "multer": "^2.2.0",
+    "xlsx": "^0.18.5"
   }
 }

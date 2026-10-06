@@ -16,6 +16,7 @@ const schema = new mongoose.Schema({
   twoFactorEnabled: { type: Boolean, default: false },
   twoFactorSecret: { type: String, select: false },
   isActive: { type: Boolean, default: true },
+  mustChangePassword: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
 }, { collection: 'users' });
 

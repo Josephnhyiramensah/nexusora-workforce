@@ -1,14 +1,37 @@
-// Per-tenant Employee record (Core HR) — class-aware superset.
-// The schema holds every field any worker class might need; the client form shows only
-// the sections relevant to the selected employmentType + workerClass. All sections optional
-// except name, so casual/tapper records aren't forced to carry staff-only fields.
 const mongoose = require('mongoose');
+
+const dependentSchema = new mongoose.Schema({
+  name: String,
+  relationship: String,
+  dateOfBirth: Date,
+}, { _id: true });
+
+const documentSchema = new mongoose.Schema({
+  name: String,
+  type: String,
+  url: String,
+  publicId: String,
+  format: String,
+  bytes: Number,
+  uploadedAt: { type: Date, default: Date.now },
+  uploadedBy: String,
+}, { _id: true });
+
+const payComponentSchema = new mongoose.Schema({
+  type: String,
+  amount: Number,
+  currency: String,
+  frequency: { type: String, enum: ['monthly', 'annual', 'weekly', 'daily', 'biweekly', 'one_time'], default: 'monthly' },
+}, { _id: true });
 
 const schema = new mongoose.Schema({
   staffId: { type: String, index: true },
   firstName: { type: String, required: true, trim: true },
   lastName: { type: String, required: true, trim: true },
+  preferredName: { type: String, trim: true },
   gender: { type: String, enum: ['male', 'female', 'other'] },
+  maritalStatus: { type: String, enum: ['single', 'married', 'divorced', 'widowed', 'separated'] },
+  nationality: String,
   dateOfBirth: Date,
   nationalId: String,
   photo: String,
@@ -18,34 +41,45 @@ const schema = new mongoose.Schema({
   nextOfKin: { name: String, relationship: String, phone: String },
   emergencyContact: { name: String, relationship: String, phone: String },
 
+  dependents: [dependentSchema],
+  documents: [documentSchema],
+
   employment: {
     jobTitle: String,
     department: String,
-    section: String,          // plantation section / estate
-    costCentre: String,       // maps to Nexusora Books cost centre
+    departmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'OrgUnit', default: null },
+    section: String,
+    sectionId: { type: mongoose.Schema.Types.ObjectId, ref: 'OrgUnit', default: null },
+    positionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Position', default: null },
+    costCentre: String,
     grade: String,
-    employmentType: { type: String, enum: ['permanent', 'contract', 'casual', 'seasonal', 'probation'], default: 'permanent' },
-    workerClass: { type: String, enum: ['staff', 'field_worker', 'tapper', 'operator'], default: 'staff' },
+    // employmentType and workerClass are now customer-managed picklists (see Picklist model),
+    // so they accept any code the tenant defines — NOT a fixed enum.
+    employmentType: { type: String, default: 'permanent' },
+    workerClass: { type: String, default: 'staff' },
     lineManager: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
-    crew: String,             // gang / crew for field workers
+    crew: String,
     startDate: Date,
     confirmationStatus: { type: String, enum: ['probation', 'confirmed', 'exited'], default: 'probation' },
+    probationEndDate: Date,
     contractType: String,
     contractStart: Date,
     contractEnd: Date,
+    terminationDate: Date,
+    terminationReason: String,
   },
 
-  // Statutory identifiers (staff / operator / contract; optional for casual).
   statutory: { socialSecurityNumber: String, socialSecurityScheme: String, taxId: String },
 
   compensation: {
     payBasis: { type: String, enum: ['salary', 'daily', 'hourly', 'piece_rate', 'task'], default: 'salary' },
     currency: String,
-    baseSalary: Number,       // monthly (salary)
+    baseSalary: Number,
     dailyRate: Number,
     hourlyRate: Number,
-    pieceRate: { amount: Number, unit: String },   // e.g. amount per kg of latex/cuplump
+    pieceRate: { amount: Number, unit: String },
     grade: String,
+    payComponents: [payComponentSchema],
   },
 
   payment: {
@@ -54,9 +88,8 @@ const schema = new mongoose.Schema({
     mobileMoney: { provider: String, number: String },
   },
 
-  // Plantation field-work details (tapper / field_worker).
   fieldWork: {
-    taskType: String,         // tapping, weeding, harvesting…
+    taskType: String,
     quota: Number,
     quotaUnit: String,
     medicalClearance: { status: { type: String, enum: ['pending', 'cleared', 'expired'], default: 'pending' }, date: Date, note: String },

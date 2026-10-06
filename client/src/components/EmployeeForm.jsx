@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../api/client';
 import { useLocale } from '../context/LocaleContext';
 import { useAuth } from '../context/AuthContext';
 import {
-  WORKER_CLASSES, EMPLOYMENT_TYPES, GENDERS, PAY_BASES, PAY_METHODS,
-  sectionsFor, payFieldsFor, defaultPayBasis, defaultPaymentMethod,
+  GENDERS, PAY_BASES, PAY_METHODS,
+  sectionsForRecord, payFieldsFor, defaultPayBasisFor, defaultPaymentMethodFor, findByCode,
 } from '../config/employeeProfiles';
 
 const isoDate = (v) => {
@@ -12,6 +12,7 @@ const isoDate = (v) => {
   const d = new Date(v);
   return isNaN(d) ? '' : d.toISOString().slice(0, 10);
 };
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function initialState(emp, baseCurrency) {
   const e = emp || {};
@@ -21,25 +22,32 @@ function initialState(emp, baseCurrency) {
   const nok = e.nextOfKin || {}; const st = e.statutory || {}; const ed = e.education || {};
   const pr = comp.pieceRate || {};
   return {
+    // Effective-dated-history metadata (sent only on edit; never stored on the employee doc).
+    effectiveDate: todayISO(),
+    changeNote: '',
     firstName: e.firstName || '', lastName: e.lastName || '', gender: e.gender || '',
     dateOfBirth: isoDate(e.dateOfBirth), nationalId: e.nationalId || '',
     email: e.email || '', phone: e.phone || '', address: e.address || '',
     nextOfKin: { name: nok.name || '', relationship: nok.relationship || '', phone: nok.phone || '' },
     employment: {
-      staffId: e.staffId || '', jobTitle: em.jobTitle || '', department: em.department || '', section: em.section || '',
+      staffId: e.staffId || '', jobTitle: em.jobTitle || '',
+      department: em.department || '', departmentId: em.departmentId || '',
+      section: em.section || '', sectionId: em.sectionId || '',
+      positionId: em.positionId || '',
       costCentre: em.costCentre || '', grade: em.grade || '', crew: em.crew || '',
       workerClass: em.workerClass || 'staff', employmentType: em.employmentType || 'permanent',
       startDate: isoDate(em.startDate), confirmationStatus: em.confirmationStatus || 'probation',
+      probationEndDate: isoDate(em.probationEndDate),
       contractStart: isoDate(em.contractStart), contractEnd: isoDate(em.contractEnd),
     },
     statutory: { socialSecurityNumber: st.socialSecurityNumber || '', taxId: st.taxId || '' },
     compensation: {
-      payBasis: comp.payBasis || defaultPayBasis(em.workerClass || 'staff'), currency: comp.currency || baseCurrency || '',
+      payBasis: comp.payBasis || 'salary', currency: comp.currency || baseCurrency || '',
       baseSalary: comp.baseSalary ?? '', dailyRate: comp.dailyRate ?? '', hourlyRate: comp.hourlyRate ?? '',
       pieceAmount: pr.amount ?? '', pieceUnit: pr.unit || 'kg',
     },
     payment: {
-      method: pay.method || defaultPaymentMethod(em.workerClass || 'staff'),
+      method: pay.method || 'bank',
       bank: { bankName: bank.bankName || '', accountNumber: bank.accountNumber || '', accountName: bank.accountName || '' },
       mobileMoney: { provider: mm.provider || '', number: mm.number || '' },
     },
@@ -50,7 +58,6 @@ function initialState(emp, baseCurrency) {
 
 const numOrUndef = (v) => (v === '' || v === null || v === undefined ? undefined : Number(v));
 
-// Deep-remove empty strings / null / empty objects so enum + date casts never see ''.
 function clean(obj) {
   if (obj === '' || obj === null || obj === undefined) return undefined;
   if (typeof obj !== 'object') return obj;
@@ -72,6 +79,39 @@ export default function EmployeeForm({ employee, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Picklists (worker classes / employment types / grades) + org units + positions.
+  const [workerClasses, setWorkerClasses] = useState([]);
+  const [employmentTypes, setEmploymentTypes] = useState([]);
+  const [grades, setGrades] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [sectionUnits, setSectionUnits] = useState([]);
+  const [positions, setPositions] = useState([]);
+  const [loadingLists, setLoadingLists] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [pl, orgRes, posRes] = await Promise.all([
+          api.get('/picklists', { params: { active: 'true' } }),
+          api.get('/org', { params: { active: 'true' } }),
+          api.get('/positions', { params: { active: 'true' } }),
+        ]);
+        if (!alive) return;
+        const items = pl.data.items || [];
+        setWorkerClasses(items.filter((i) => i.type === 'worker_class'));
+        setEmploymentTypes(items.filter((i) => i.type === 'employment_type'));
+        setGrades(items.filter((i) => i.type === 'grade'));
+        const units = orgRes.data.items || [];
+        setDepartments(units.filter((u) => u.type === 'department'));
+        setSectionUnits(units.filter((u) => u.type === 'section'));
+        setPositions((posRes.data.items || []).filter((p) => p.active !== false));
+      } catch { /* lists stay empty if fetch fails */ }
+      finally { if (alive) setLoadingLists(false); }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   const setField = (path, value) => setF((prev) => {
     const next = structuredClone(prev);
     const keys = path.split('.'); let o = next;
@@ -80,15 +120,29 @@ export default function EmployeeForm({ employee, onClose, onSaved }) {
     return next;
   });
 
-  // When class changes, refresh sensible pay/payment defaults.
-  const onClassChange = (wc) => setF((prev) => ({
-    ...prev,
-    employment: { ...prev.employment, workerClass: wc },
-    compensation: { ...prev.compensation, payBasis: defaultPayBasis(wc) },
-    payment: { ...prev.payment, method: defaultPaymentMethod(wc) },
-  }));
+  const pickDepartment = (id) => setF((prev) => {
+    const unit = departments.find((u) => u._id === id);
+    return { ...prev, employment: { ...prev.employment, departmentId: id, department: unit ? unit.name : '' } };
+  });
+  const pickSection = (id) => setF((prev) => {
+    const unit = sectionUnits.find((u) => u._id === id);
+    return { ...prev, employment: { ...prev.employment, sectionId: id, section: unit ? unit.name : '' } };
+  });
 
-  const sections = sectionsFor(f.employment.workerClass, f.employment.employmentType);
+  // When worker class changes, read THAT record's flags to set pay/payment defaults.
+  const onClassChange = (code) => setF((prev) => {
+    const rec = findByCode(workerClasses, code);
+    return {
+      ...prev,
+      employment: { ...prev.employment, workerClass: code },
+      compensation: { ...prev.compensation, payBasis: defaultPayBasisFor(rec) },
+      payment: { ...prev.payment, method: defaultPaymentMethodFor(rec) },
+    };
+  });
+
+  // Current worker-class record (for section logic) + sections to show.
+  const currentWC = findByCode(workerClasses, f.employment.workerClass);
+  const sections = sectionsForRecord(currentWC, f.employment.employmentType);
   const payFields = payFieldsFor(f.compensation.payBasis);
 
   async function submit() {
@@ -100,10 +154,14 @@ export default function EmployeeForm({ employee, onClose, onSaved }) {
         dateOfBirth: f.dateOfBirth, nationalId: f.nationalId, email: f.email, phone: f.phone, address: f.address,
         nextOfKin: sections.has('nextOfKin') ? f.nextOfKin : undefined,
         employment: {
-          jobTitle: f.employment.jobTitle, department: f.employment.department, section: f.employment.section,
+          jobTitle: f.employment.jobTitle,
+          department: f.employment.department, departmentId: f.employment.departmentId || undefined,
+          section: f.employment.section, sectionId: f.employment.sectionId || undefined,
+          positionId: f.employment.positionId || undefined,
           costCentre: f.employment.costCentre, grade: f.employment.grade, crew: f.employment.crew,
           workerClass: f.employment.workerClass, employmentType: f.employment.employmentType,
           startDate: f.employment.startDate, confirmationStatus: f.employment.confirmationStatus,
+          probationEndDate: f.employment.probationEndDate,
           contractStart: sections.has('contract') ? f.employment.contractStart : undefined,
           contractEnd: sections.has('contract') ? f.employment.contractEnd : undefined,
         },
@@ -126,8 +184,17 @@ export default function EmployeeForm({ employee, onClose, onSaved }) {
         } : undefined,
         education: sections.has('education') ? f.education : undefined,
       });
-      if (editing) await api.put(`/employees/${employee._id}`, payload);
-      else await api.post('/employees', payload);
+      if (editing) {
+        // effectiveDate / changeNote are history metadata read by the controller,
+        // then stripped before the employee doc is written.
+        await api.put(`/employees/${employee._id}`, {
+          ...payload,
+          effectiveDate: f.effectiveDate || undefined,
+          changeNote: f.changeNote?.trim() || undefined,
+        });
+      } else {
+        await api.post('/employees', payload);
+      }
       onSaved();
     } catch (e) { setError(e?.response?.data?.message || t('employees.saveFailed')); }
     finally { setBusy(false); }
@@ -145,16 +212,36 @@ export default function EmployeeForm({ employee, onClose, onSaved }) {
       <div className="modal modal--wide" onClick={(e) => e.stopPropagation()}>
         <h2 className="modal__title">{editing ? t('employees.edit') : t('employees.add')}</h2>
 
+        {loadingLists && <div className="info-note">Loading lists…</div>}
+
+        {editing && (<>
+          <h3 className="form-section">Effective date of change</h3>
+          <div className="grid2">
+            <label className="field">Effective date
+              <input type="date" value={f.effectiveDate} onChange={(e) => setField('effectiveDate', e.target.value)} />
+            </label>
+            <label className="field">Change note (optional)
+              <input value={f.changeNote} onChange={(e) => setField('changeNote', e.target.value)}
+                placeholder="e.g. Annual promotion, pay review" />
+            </label>
+          </div>
+          <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: '-4px 0 4px' }}>
+            Used to date any job or pay change on the History timeline. Defaults to today.
+          </p>
+        </>)}
+
         <h3 className="form-section">{t('employees.sec_role')}</h3>
         <div className="grid2">
           <label className="field">{t('employees.workerClass')}
             <select value={f.employment.workerClass} onChange={(e) => onClassChange(e.target.value)}>
-              {WORKER_CLASSES.map((v) => <option key={v} value={v}>{t('wc_' + v)}</option>)}
+              <option value="">—</option>
+              {workerClasses.map((w) => <option key={w._id} value={w.code}>{w.name}</option>)}
             </select>
           </label>
           <label className="field">{t('employees.type')}
             <select value={f.employment.employmentType} onChange={(e) => setField('employment.employmentType', e.target.value)}>
-              {EMPLOYMENT_TYPES.map((v) => <option key={v} value={v}>{t('et_' + v)}</option>)}
+              <option value="">—</option>
+              {employmentTypes.map((et) => <option key={et._id} value={et.code}>{et.name}</option>)}
             </select>
           </label>
         </div>
@@ -183,11 +270,41 @@ export default function EmployeeForm({ employee, onClose, onSaved }) {
         <h3 className="form-section">{t('employees.sec_employment')}</h3>
         <div className="grid2">
           {F(t('employees.jobTitle'), 'employment.jobTitle')}
-          {F(t('employees.department'), 'employment.department')}
-          {F(t('employees.section'), 'employment.section')}
+          <label className="field">Position
+            <select value={f.employment.positionId || ''} onChange={(e) => setField('employment.positionId', e.target.value)}>
+              <option value="">—</option>
+              {positions.map((p) => <option key={p._id} value={p._id}>{p.title}{p.code ? ` (${p.code})` : ''}</option>)}
+            </select>
+          </label>
+          <label className="field">{t('employees.department')}
+            <select value={f.employment.departmentId || ''} onChange={(e) => pickDepartment(e.target.value)}>
+              <option value="">—</option>
+              {departments.map((u) => <option key={u._id} value={u._id}>{u.name}{u.code ? ` (${u.code})` : ''}</option>)}
+            </select>
+          </label>
+          <label className="field">{t('employees.section')}
+            <select value={f.employment.sectionId || ''} onChange={(e) => pickSection(e.target.value)}>
+              <option value="">—</option>
+              {sectionUnits.map((u) => <option key={u._id} value={u._id}>{u.name}{u.code ? ` (${u.code})` : ''}</option>)}
+            </select>
+          </label>
+          <label className="field">{t('employees.grade') || 'Grade'}
+            <select value={f.employment.grade} onChange={(e) => setField('employment.grade', e.target.value)}>
+              <option value="">—</option>
+              {grades.map((g) => <option key={g._id} value={g.code}>{g.name}</option>)}
+            </select>
+          </label>
           {F(t('employees.costCentre'), 'employment.costCentre')}
           {sections.has('fieldWork') && F(t('employees.crew'), 'employment.crew')}
           {F(t('employees.startDate'), 'employment.startDate', { type: 'date' })}
+          <label className="field">Confirmation status
+            <select value={f.employment.confirmationStatus} onChange={(e) => setField('employment.confirmationStatus', e.target.value)}>
+              <option value="probation">Probation</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="exited">Exited</option>
+            </select>
+          </label>
+          {F('Probation end date', 'employment.probationEndDate', { type: 'date' })}
         </div>
 
         {sections.has('contract') && (<>
