@@ -5,7 +5,6 @@ import { useAuth } from '../context/AuthContext';
 import { useLocale } from '../context/LocaleContext';
 import api from '../api/client';
 import { MODULE_GROUPS } from '../config/moduleList';
-import CurrencySwitcher from '../ui/CurrencySwitcher';
 
 const C = { navy: '#012158', blue: '#3485E9', canvas: '#eef1f4', card: '#fff',
   ink: '#16233b', muted: '#8b96a9', muted2: '#67728a', line: '#e6ebf3' };
@@ -110,9 +109,6 @@ export default function HomeScreen() {
               {locales.map((l) => <option key={l.code} value={l.code}>{(l.nativeName || l.name) + (l.status && l.status !== 'ready' ? ' •' : '')}</option>)}
             </select>
           </div>
-
-          {/* display currency (per-user, view-only) */}
-          <CurrencySwitcher />
 
           <button title={t('common.notifications')} style={{ position: 'relative', width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.line}`, background: '#fff', display: 'grid', placeItems: 'center', color: C.muted2, cursor: 'pointer' }}><Bell size={17} /></button>
 

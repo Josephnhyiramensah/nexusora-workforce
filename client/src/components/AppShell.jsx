@@ -10,11 +10,11 @@ import { useLocale } from '../context/LocaleContext';
 import { GlobalStyles } from '../ui/kit';
 import { C, FONT, initials, fullName } from '../ui/tokens';
 import {
-  Home, Users, Wallet, Gauge, BarChart3, Grid3x3, Search, Bell, LogOut, Settings,
+  Home, Users, Wallet, Gauge, BarChart3, Grid3x3, Search, LogOut, Settings,
   Building2, Briefcase, FileText, UserPlus, ClipboardCheck, CalendarClock, CalendarDays,
   ShieldCheck, TrendingUp, GraduationCap, Network, HeartHandshake, Scale, Sparkles, IdCard,
 } from 'lucide-react';
-import CurrencySwitcher from '../ui/CurrencySwitcher';
+import NotificationBell from './NotificationBell';
 
 /* All modules, grouped — powers the launcher grid */
 const MODULES = [
@@ -49,7 +49,6 @@ const MODULES = [
     { label: 'Documents', to: '/documents', Icon: FileText, accent: '#0b6fd6' },
     { label: 'Workforce Planning', to: '/workforce-planning', Icon: Gauge, accent: '#17a2b8' },
     { label: 'AI Advisor', to: '/ai-advisor', Icon: Sparkles, accent: '#7c5cdf' },
-    { label: 'Settings', to: '/settings', Icon: Settings, accent: '#67728a' },
   ] },
 ];
 
@@ -58,7 +57,6 @@ const PRIMARY = [
   { label: 'People', tKey: 'nav.people', to: '/employees', Icon: Users, match: (p) => ['/employees', '/organization', '/positions', '/job-descriptions', '/self-service', '/recruitment', '/onboarding'].some((x) => p.startsWith(x)) },
   { label: 'Welfare', tKey: 'nav.welfare', to: '/welfare', Icon: HeartHandshake, match: (p) => ['/welfare', '/relations', '/learning', '/succession', '/performance'].some((x) => p.startsWith(x)) },
   { label: 'Analytics', tKey: 'nav.analytics', to: '/analytics', Icon: BarChart3, match: (p) => ['/analytics', '/documents', '/workforce-planning', '/ai-advisor', '/payroll', '/attendance', '/leave', '/compliance'].some((x) => p.startsWith(x)) },
-  { label: 'Admin', tKey: 'nav.admin', to: '/settings', Icon: Settings, match: (p) => p.startsWith('/settings') },
 ];
 
 export default function AppShell({ children }) {
@@ -96,9 +94,8 @@ export default function AppShell({ children }) {
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div className="nx-topsearch" style={{ display: 'flex', alignItems: 'center', gap: 9, background: '#f2f5f8', border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 12px', width: 262, color: C.muted2, fontSize: '.82rem' }}><Search size={15} /> {t('nav.searchPlaceholder')}</div>
-          <CurrencySwitcher compact />
           {!onHome && <button title={t('nav.allModules')} onClick={() => setLauncher((v) => !v)} style={iconBtn(launcher)}><Grid3x3 size={18} /></button>}
-          <button title={t('common.notifications')} style={iconBtn(false)}><Bell size={17} /><span style={{ position: 'absolute', top: 8, right: 9, width: 7, height: 7, borderRadius: '50%', background: C.red, border: '1.5px solid #fff' }} /></button>
+          <NotificationBell compact />
           <div style={{ position: 'relative' }}>
             <button onClick={() => setMenu((v) => !v)} title={name} style={{ width: 37, height: 37, borderRadius: '50%', flex: 'none', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg,#3485E9,#012158)', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: '.82rem' }}>{initials(name)}</button>
             {menu && (

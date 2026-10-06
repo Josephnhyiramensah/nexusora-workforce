@@ -60,6 +60,7 @@ app.use('/api/compliance', require('./modules/compliance/compliance.routes'));
 app.use('/api/succession', require('./modules/succession/succession.routes'));
 app.use('/api/ai', require('./modules/ai/ai.routes'));
 app.use('/api/welfare', require('./modules/welfare/welfare.routes'));
+app.use('/api/notifications', require('./modules/notifications/notification.routes'));
 app.use(notFound);
 app.use(errorHandler);
 module.exports = app;

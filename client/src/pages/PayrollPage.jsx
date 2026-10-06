@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import ExcelJS from 'exceljs';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useLocale } from '../context/LocaleContext';
 import PayslipPrint from '../components/PayslipPrint';
 import { CalendarClock, CalendarDays, Wallet, ShieldCheck, Users, Layers, Clock, Plus } from 'lucide-react';
 import { RouteShell, Hero, KpiBand, Kpi, Body, Segmented } from '../ui/kit';
+import { formatMoney } from '../ui/tokens';
 
 const C = { navy: '#012158', blue: '#3485E9', orange: '#FD9C09', gold: '#C9A227', green: '#1f9d57',
   red: '#e5484d', ink: '#16233b', muted: '#8b96a9', line: '#e6ebf3', card: '#fff' };
@@ -19,7 +21,7 @@ const TIMEPAY_RAIL = {
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const num = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const money = (n, c) => `${c || ''} ${num(n)}`.trim();
+const money = (n, c) => formatMoney(n, c, { maximumFractionDigits: 2 });
 
 async function downloadWorkbook(wb, filename) {
   const buf = await wb.xlsx.writeBuffer();
@@ -89,6 +91,7 @@ function brandSheet(wb, ws, b, tenant, lastCol, title, subtitle, logoAnchorCol) 
 
 export default function PayrollPage() {
   const { user, tenant } = useAuth();
+  const { t } = useLocale();
   const [tab, setTab] = useState('employees');
   const [period, setPeriod] = useState(thisMonth());
   const [runs, setRuns] = useState([]);
@@ -105,6 +108,14 @@ export default function PayrollPage() {
   const [reconBusy, setReconBusy] = useState(false);
   const [reconResult, setReconResult] = useState(null);
   const [reconErr, setReconErr] = useState('');
+
+  const rail = useMemo(() => ({
+    brand: { title: t('compliance.rail_brand'), subtitle: t('compliance.rail_sub'), Icon: CalendarClock },
+    groups: [
+      { title: t('compliance.grp_time'), items: [{ label: t('home.tile.attendance'), to: '/attendance', Icon: CalendarClock }, { label: t('home.tile.leave'), to: '/leave', Icon: CalendarDays }] },
+      { title: t('compliance.grp_pay'), items: [{ label: t('home.tile.payroll'), to: '/payroll', Icon: Wallet }, { label: t('home.tile.compliance'), to: '/compliance', Icon: ShieldCheck }] },
+    ],
+  }), [t]);
 
   const canRun = ['super_admin', 'payroll_officer'].includes(user?.role);
   const canApprove = ['super_admin', 'hr_manager'].includes(user?.role);
@@ -126,23 +137,23 @@ export default function PayrollPage() {
     try {
       const { data } = await api.post('/payroll/runs', { period });
       setDetail(data); setJournal(null); setShowRun(false); setTab('runs'); refresh();
-      setMsg(`Payroll run created for ${period} — ${data?.totals?.headcount ?? 0} employee(s).`);
-    } catch (e) { setMsg(e?.response?.data?.message || 'Could not run payroll'); }
+      setMsg(t('payroll.msg_runCreated', { period, n: data?.totals?.headcount ?? 0 }));
+    } catch (e) { setMsg(e?.response?.data?.message || t('payroll.err_run')); }
     finally { setBusy(false); }
   }
   async function openRun(id) {
     setJournal(null);
     try { const { data } = await api.get(`/payroll/runs/${id}`); setDetail(data); setTab('runs'); }
-    catch { setMsg('Could not open run'); }
+    catch { setMsg(t('payroll.err_open')); }
   }
   async function approve(id) {
-    try { await api.post(`/payroll/runs/${id}/approve`); await openRun(id); refresh(); setMsg('Run approved.'); }
-    catch (e) { setMsg(e?.response?.data?.message || 'Could not approve'); }
+    try { await api.post(`/payroll/runs/${id}/approve`); await openRun(id); refresh(); setMsg(t('payroll.msg_approved')); }
+    catch (e) { setMsg(e?.response?.data?.message || t('payroll.err_approve')); }
   }
   async function loadJournal(run) {
     setMsg('');
     try { const { data } = await api.get(`/payroll/runs/${run._id}/journal`); setJournal({ ...data, runId: run._id, runLabel: run.label || run.period }); }
-    catch (e) { setJournal(null); setMsg(e?.response?.data?.message || 'Could not build journal'); }
+    catch (e) { setJournal(null); setMsg(e?.response?.data?.message || t('payroll.err_journal')); }
   }
 
   const downloadReconTemplate = () => {
@@ -155,11 +166,11 @@ export default function PayrollPage() {
     URL.revokeObjectURL(url);
   };
   async function runReconcile() {
-    if (!reconRunId) { setReconErr('Pick a payroll run.'); return; }
-    if (!reconFile) { setReconErr('Choose the Accounts payment sheet (.xlsx or .csv).'); return; }
+    if (!reconRunId) { setReconErr(t('payroll.err_pickRun')); return; }
+    if (!reconFile) { setReconErr(t('payroll.err_pickFile')); return; }
     setReconBusy(true); setReconErr(''); setReconResult(null);
     try { const fd = new FormData(); fd.append('file', reconFile); const { data } = await api.post(`/payroll/runs/${reconRunId}/reconcile`, fd); setReconResult(data); }
-    catch (e) { setReconErr(e?.response?.data?.message || 'Reconciliation failed.'); }
+    catch (e) { setReconErr(e?.response?.data?.message || t('payroll.err_recon')); }
     finally { setReconBusy(false); }
   }
 
@@ -169,17 +180,17 @@ export default function PayrollPage() {
     wb.creator = 'Nexusora Workforce';
     const ws = wb.addWorksheet('Payroll Sheet', { views: [{ state: 'frozen', ySplit: 5 }], pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true } });
     const b = tenant?.branding || {};
-    brandSheet(wb, ws, b, tenant, 10, 'Staff Payroll Sheet', `${detail.label || detail.period} · PR-${detail.period}`, 8);
+    brandSheet(wb, ws, b, tenant, 10, t('payroll.xls_title'), `${detail.label || detail.period} · PR-${detail.period}`, 8);
     ws.addRow([]);
-    const headers = ['No', 'Employee', 'Basis', 'Days', 'Output', 'Gross', 'Social Security', 'PAYE', 'Total Deduction', 'Net Income'];
+    const headers = [t('payroll.xls_no'), t('payroll.xls_employee'), t('payroll.xls_basis'), t('payroll.xls_days'), t('payroll.xls_output'), t('payroll.xls_gross'), t('payroll.xls_socialSecurity'), t('payroll.xls_paye'), t('payroll.xls_totalDeduction'), t('payroll.xls_netIncome')];
     styleHeader(ws.addRow(headers));
     (detail.payslips || []).forEach((s, i) => {
       const r = ws.addRow([i + 1, s.employee?.name || '', (s.employee?.payBasis || '').replace('_', ' '), Number(s.inputs?.daysWorked || 0), Number(s.inputs?.output || 0), Number(s.earnings?.grossEarnings || 0), Number(s.deductions?.socialSecurity || 0), Number(s.paye || 0), Number(s.deductions?.total || 0), Number(s.netPay || 0)]);
       if (i % 2) r.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFBFE' } }; });
       r.getCell(10).font = { bold: true };
     });
-    const t = ws.addRow(['', 'TOTALS', '', '', '', Number(detail.totals?.gross || 0), (detail.payslips || []).reduce((a, s) => a + Number(s.deductions?.socialSecurity || 0), 0), (detail.payslips || []).reduce((a, s) => a + Number(s.paye || 0), 0), Number(detail.totals?.deductions || 0), Number(detail.totals?.net || 0)]);
-    styleTotals(t);
+    const t2 = ws.addRow(['', t('payroll.totals'), '', '', '', Number(detail.totals?.gross || 0), (detail.payslips || []).reduce((a, s) => a + Number(s.deductions?.socialSecurity || 0), 0), (detail.payslips || []).reduce((a, s) => a + Number(s.paye || 0), 0), Number(detail.totals?.deductions || 0), Number(detail.totals?.net || 0)]);
+    styleTotals(t2);
     ws.columns = [{ width: 6 }, { width: 28 }, { width: 13 }, { width: 9 }, { width: 11 }, { width: 15 }, { width: 17 }, { width: 14 }, { width: 17 }, { width: 16 }];
     const fmt = `#,##0.00`;
     ws.getColumn(6).numFmt = fmt; ws.getColumn(7).numFmt = fmt; ws.getColumn(8).numFmt = fmt; ws.getColumn(9).numFmt = fmt; ws.getColumn(10).numFmt = fmt;
@@ -187,7 +198,7 @@ export default function PayrollPage() {
     const note = ws.addRow([]);
     ws.mergeCells(`A${note.number + 1}:J${note.number + 1}`);
     const nc = ws.getCell(`A${note.number + 1}`);
-    nc.value = `All figures in ${detail.currency}. Employer cost this period: ${num(detail.totals?.employerCost)} (employer contributions are not deducted from staff).${b.footerNote ? ' ' + b.footerNote : ''}`;
+    nc.value = t('payroll.xls_note', { cur: detail.currency, cost: num(detail.totals?.employerCost) }) + (b.footerNote ? ' ' + b.footerNote : '');
     nc.font = { italic: true, size: 9, color: { argb: 'FF8B96A9' } };
     await downloadWorkbook(wb, `Payroll_${detail.period}.xlsx`);
   }
@@ -198,14 +209,14 @@ export default function PayrollPage() {
     wb.creator = 'Nexusora Workforce';
     const ws = wb.addWorksheet('Journal', { views: [{ state: 'frozen', ySplit: 5 }] });
     const b = tenant?.branding || {};
-    brandSheet(wb, ws, b, tenant, 6, 'Payroll journal', `${journal.reference} · ${journal.date} · ${journal.currency}`, 4);
+    brandSheet(wb, ws, b, tenant, 6, t('payroll.xls_journalTitle'), `${journal.reference} · ${journal.date} · ${journal.currency}`, 4);
     ws.addRow([]);
-    styleHeader(ws.addRow(['Date', 'Reference', 'Account', 'Description', 'Debit', 'Credit']));
+    styleHeader(ws.addRow([t('payroll.xls_date'), t('payroll.xls_reference'), t('payroll.th_account'), t('payroll.th_description'), t('payroll.th_debit'), t('payroll.th_credit')]));
     journal.lines.forEach((l, i) => {
       const r = ws.addRow([journal.date, journal.reference, l.account, l.description, l.debit || null, l.credit || null]);
       if (i % 2) r.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFBFE' } }; });
     });
-    styleTotals(ws.addRow(['', '', '', 'TOTALS', journal.totalDebit, journal.totalCredit]));
+    styleTotals(ws.addRow(['', '', '', t('payroll.totals'), journal.totalDebit, journal.totalCredit]));
     ws.columns = [{ width: 13 }, { width: 15 }, { width: 11 }, { width: 34 }, { width: 15 }, { width: 15 }];
     ws.getColumn(5).numFmt = '#,##0.00'; ws.getColumn(6).numFmt = '#,##0.00';
     await downloadWorkbook(wb, `Journal_${journal.reference}.xlsx`);
@@ -214,25 +225,25 @@ export default function PayrollPage() {
   function copyJournal() {
     if (!journal) return;
     const text = [`${journal.reference} · ${journal.date} · ${journal.currency}`, journal.memo, '', ...journal.lines.map((l) => `${l.account}\t${l.description}\t${l.debit ? num(l.debit) : ''}\t${l.credit ? num(l.credit) : ''}`), `\tTOTALS\t${num(journal.totalDebit)}\t${num(journal.totalCredit)}`].join('\n');
-    navigator.clipboard?.writeText(text).then(() => setMsg('Journal copied to clipboard.')).catch(() => setMsg('Could not copy.'));
+    navigator.clipboard?.writeText(text).then(() => setMsg(t('payroll.msg_copied'))).catch(() => setMsg(t('payroll.err_copy')));
   }
 
   const approvedRuns = runs.filter((r) => r.status !== 'draft');
   const latestNet = runs[0]?.totals?.net;
   const pendingRuns = runs.filter((r) => r.status === 'draft').length;
 
-  const TABS = [['employees', 'Employees'], ['runs', 'Payroll Runs'], ...(canAccount ? [['accounting', 'Accounting'], ['reconcile', 'Reconciliation']] : [])];
+  const TABS = [['employees', t('payroll.tab_employees')], ['runs', t('payroll.tab_runs')], ...(canAccount ? [['accounting', t('payroll.tab_accounting')], ['reconcile', t('payroll.tab_reconcile')]] : [])];
   const selectTab = (k) => { if (k === 'accounting') setJournal(null); if (k === 'reconcile') { setReconResult(null); setReconErr(''); } setTab(k); };
 
   return (
-    <RouteShell brand={TIMEPAY_RAIL.brand} groups={TIMEPAY_RAIL.groups}>
-      <Hero crumbs={['Time & Pay', 'Payroll']} title="Payroll"
-        actions={canRun && tab !== 'accounting' && <button onClick={() => setShowRun(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', border: 'none', borderRadius: 10, background: C.navy, color: '#fff', fontWeight: 700, fontSize: '.83rem', cursor: 'pointer', boxShadow: '0 4px 14px rgba(1,33,88,.28)' }}><Plus size={16} /> Run payroll</button>} />
+    <RouteShell brand={rail.brand} groups={rail.groups}>
+      <Hero crumbs={[t('compliance.rail_brand'), t('home.tile.payroll')]} title={t('home.tile.payroll')}
+        actions={canRun && tab !== 'accounting' && <button onClick={() => setShowRun(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', border: 'none', borderRadius: 10, background: C.navy, color: '#fff', fontWeight: 700, fontSize: '.83rem', cursor: 'pointer', boxShadow: '0 4px 14px rgba(1,33,88,.28)' }}><Plus size={16} /> {t('payroll.runPayroll')}</button>} />
       <KpiBand>
-        <Kpi Icon={Users} label="On payroll" value={employees.length} foot={<span>active employees</span>} onClick={() => selectTab('employees')} />
-        <Kpi Icon={Wallet} iconColor={C.green} iconBg="#e7f6ee" label="Latest net" value={latestNet != null ? money(latestNet, runs[0]?.currency) : '—'} foot={<span>most recent run</span>} onClick={() => selectTab('runs')} />
-        <Kpi Icon={Layers} iconColor={C.navy} iconBg="#eef1f6" label="Runs to date" value={runs.length} foot={<span>all periods</span>} onClick={() => selectTab('runs')} />
-        <Kpi Icon={Clock} iconColor={C.orange} iconBg="#fdf0dc" label="Awaiting approval" value={pendingRuns} pill={pendingRuns ? ['draft', 'amber'] : null} foot={<span>draft runs</span>} onClick={() => selectTab('runs')} />
+        <Kpi Icon={Users} label={t('payroll.kpi_onPayroll')} value={employees.length} foot={<span>{t('payroll.kpi_onPayroll_foot')}</span>} onClick={() => selectTab('employees')} />
+        <Kpi Icon={Wallet} iconColor={C.green} iconBg="#e7f6ee" label={t('payroll.kpi_latestNet')} value={latestNet != null ? money(latestNet, runs[0]?.currency) : '—'} foot={<span>{t('payroll.kpi_latestNet_foot')}</span>} onClick={() => selectTab('runs')} />
+        <Kpi Icon={Layers} iconColor={C.navy} iconBg="#eef1f6" label={t('payroll.kpi_runs')} value={runs.length} foot={<span>{t('payroll.kpi_runs_foot')}</span>} onClick={() => selectTab('runs')} />
+        <Kpi Icon={Clock} iconColor={C.orange} iconBg="#fdf0dc" label={t('payroll.kpi_awaiting')} value={pendingRuns} pill={pendingRuns ? [t('payroll.st_draft'), 'amber'] : null} foot={<span>{t('payroll.kpi_awaiting_foot')}</span>} onClick={() => selectTab('runs')} />
       </KpiBand>
       <Body>
         <div style={{ minWidth: 0 }}>
@@ -243,9 +254,9 @@ export default function PayrollPage() {
             <Card>
               <div style={{ overflowX: 'auto' }}>
                 <table style={tbl()}>
-                  <thead><tr>{['Name', 'Position', 'Pay basis', 'Rate / Salary', 'Payment'].map((h) => <Th key={h}>{h}</Th>)}</tr></thead>
+                  <thead><tr>{[t('payroll.th_name'), t('payroll.th_position'), t('payroll.th_payBasis'), t('payroll.th_rate'), t('payroll.th_payment')].map((h) => <Th key={h}>{h}</Th>)}</tr></thead>
                   <tbody>
-                    {employees.length === 0 && <tr><td colSpan="5" style={empty()}>No employees. Add one in Employee Records to get started.</td></tr>}
+                    {employees.length === 0 && <tr><td colSpan="5" style={empty()}>{t('payroll.empty_employees')}</td></tr>}
                     {employees.map((e, i) => {
                       const comp = e.compensation || {};
                       const rate = comp.payBasis === 'salary' ? comp.baseSalary : comp.payBasis === 'daily' ? comp.dailyRate : comp.payBasis === 'hourly' ? comp.hourlyRate : comp.pieceRate?.amount;
@@ -270,14 +281,14 @@ export default function PayrollPage() {
               <Card>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={tbl()}>
-                    <thead><tr>{['Period', 'Headcount', 'Gross', 'Net', 'Status', ''].map((h) => <Th key={h}>{h}</Th>)}</tr></thead>
+                    <thead><tr>{[t('payroll.th_period'), t('payroll.th_headcount'), t('payroll.th_gross'), t('payroll.th_net'), t('common.status'), ''].map((h) => <Th key={h}>{h}</Th>)}</tr></thead>
                     <tbody>
-                      {runs.length === 0 && <tr><td colSpan="6" style={empty()}>No payroll runs yet. Click “Run payroll” to create one.</td></tr>}
+                      {runs.length === 0 && <tr><td colSpan="6" style={empty()}>{t('payroll.empty_runs')}</td></tr>}
                       {runs.map((r, i) => (
                         <tr key={r._id} style={{ borderTop: `1px solid ${C.line}`, background: i % 2 ? '#fafbfe' : '#fff' }}>
                           <Td>{r.label || r.period}</Td><Td>{r.totals?.headcount ?? '—'}</Td><Td>{money(r.totals?.gross, r.currency)}</Td><Td>{money(r.totals?.net, r.currency)}</Td>
                           <Td><Pill status={r.status} /></Td>
-                          <Td><button onClick={() => openRun(r._id)} style={{ padding: '6px 14px', border: 'none', borderRadius: 8, background: C.blue, color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '.8rem' }}>View</button></Td>
+                          <Td><button onClick={() => openRun(r._id)} style={{ padding: '6px 14px', border: 'none', borderRadius: 8, background: C.blue, color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '.8rem' }}>{t('payroll.view')}</button></Td>
                         </tr>
                       ))}
                     </tbody>
@@ -288,28 +299,28 @@ export default function PayrollPage() {
               {detail && (
                 <div style={{ marginTop: 22 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
-                    <div style={{ fontWeight: 800, color: C.navy, fontSize: '1.05rem' }}>{detail.label || detail.period} · {money(detail.totals?.net, detail.currency)} net</div>
+                    <div style={{ fontWeight: 800, color: C.navy, fontSize: '1.05rem' }}>{detail.label || detail.period} · {money(detail.totals?.net, detail.currency)}{t('payroll.netSuffix')}</div>
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                      <button onClick={() => setPrinting(true)} style={outlineBtn()}>Payslips</button>
-                      <button onClick={exportPayrollExcel} style={outlineBtn()}>⭳ Export Excel</button>
-                      {canApprove && detail.status === 'draft' && <button onClick={() => approve(detail._id)} style={{ padding: '9px 16px', border: 'none', borderRadius: 10, background: C.green, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Approve run</button>}
+                      <button onClick={() => setPrinting(true)} style={outlineBtn()}>{t('payroll.payslips')}</button>
+                      <button onClick={exportPayrollExcel} style={outlineBtn()}>⭳ {t('payroll.exportExcel')}</button>
+                      {canApprove && detail.status === 'draft' && <button onClick={() => approve(detail._id)} style={{ padding: '9px 16px', border: 'none', borderRadius: 10, background: C.green, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>{t('payroll.approveRun')}</button>}
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 18 }}>
-                    <Stat label="Headcount" value={detail.totals?.headcount ?? 0} />
-                    <Stat label="Gross" value={money(detail.totals?.gross, detail.currency)} />
-                    <Stat label="Deductions" value={money(detail.totals?.deductions, detail.currency)} />
-                    <Stat label="Net pay" value={money(detail.totals?.net, detail.currency)} accent />
-                    <Stat label="Employer cost" value={money(detail.totals?.employerCost, detail.currency)} />
+                    <Stat label={t('payroll.stat_headcount')} value={detail.totals?.headcount ?? 0} />
+                    <Stat label={t('payroll.stat_gross')} value={money(detail.totals?.gross, detail.currency)} />
+                    <Stat label={t('payroll.stat_deductions')} value={money(detail.totals?.deductions, detail.currency)} />
+                    <Stat label={t('payroll.stat_net')} value={money(detail.totals?.net, detail.currency)} accent />
+                    <Stat label={t('payroll.stat_employerCost')} value={money(detail.totals?.employerCost, detail.currency)} />
                   </div>
                   <Card>
                     <div style={{ overflowX: 'auto' }}>
                       <table style={tbl()}>
-                        <thead><tr>{['Employee', 'Basis', 'Gross', 'Social security', 'PAYE', 'Net'].map((h) => <Th key={h}>{h}</Th>)}</tr></thead>
+                        <thead><tr>{[t('payroll.th_employee'), t('payroll.th_basis'), t('payroll.th_gross'), t('payroll.th_socialSecurity'), t('payroll.th_paye'), t('payroll.th_net')].map((h) => <Th key={h}>{h}</Th>)}</tr></thead>
                         <tbody>
                           {(detail.payslips || []).map((s, i) => (
                             <tr key={i} style={{ borderTop: `1px solid ${C.line}`, background: i % 2 ? '#fafbfe' : '#fff' }}>
-                              <Td>{s.employee?.name || '—'}{s.minimumWage?.toppedUp && <span title="Topped up to minimum wage" style={{ marginLeft: 6, fontSize: '.62rem', color: C.orange, fontWeight: 700 }}>▲ min-wage</span>}</Td>
+                              <Td>{s.employee?.name || '—'}{s.minimumWage?.toppedUp && <span title={t('payroll.minWageTitle')} style={{ marginLeft: 6, fontSize: '.62rem', color: C.orange, fontWeight: 700 }}>▲ {t('payroll.minWage')}</span>}</Td>
                               <Td style={{ textTransform: 'capitalize' }}>{(s.employee?.payBasis || '').replace('_', ' ')}</Td>
                               <Td>{money(s.earnings?.grossEarnings, s.currency)}</Td><Td>{money(s.deductions?.socialSecurity, s.currency)}</Td><Td>{money(s.paye, s.currency)}</Td>
                               <Td style={{ fontWeight: 700 }}>{money(s.netPay, s.currency)}</Td>
@@ -326,18 +337,18 @@ export default function PayrollPage() {
 
           {tab === 'accounting' && (
             <>
-              <div style={{ color: C.muted, fontSize: '.88rem', marginBottom: 16, lineHeight: 1.6 }}>Approved payroll runs and their ledger entries. Post these in Nexusora Books yourself — nothing is transmitted automatically.</div>
+              <div style={{ color: C.muted, fontSize: '.88rem', marginBottom: 16, lineHeight: 1.6 }}>{t('payroll.accountingIntro')}</div>
               <Card>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={tbl()}>
-                    <thead><tr>{['Period', 'Gross', 'Net', 'Status', ''].map((h) => <Th key={h}>{h}</Th>)}</tr></thead>
+                    <thead><tr>{[t('payroll.th_period'), t('payroll.th_gross'), t('payroll.th_net'), t('common.status'), ''].map((h) => <Th key={h}>{h}</Th>)}</tr></thead>
                     <tbody>
-                      {approvedRuns.length === 0 && <tr><td colSpan="5" style={empty()}>No approved runs yet. Approve a payroll run first.</td></tr>}
+                      {approvedRuns.length === 0 && <tr><td colSpan="5" style={empty()}>{t('payroll.empty_approved')}</td></tr>}
                       {approvedRuns.map((r, i) => (
                         <tr key={r._id} style={{ borderTop: `1px solid ${C.line}`, background: i % 2 ? '#fafbfe' : '#fff' }}>
                           <Td>{r.label || r.period}</Td><Td>{money(r.totals?.gross, r.currency)}</Td><Td>{money(r.totals?.net, r.currency)}</Td>
                           <Td><Pill status={r.status} /></Td>
-                          <Td><button onClick={() => loadJournal(r)} style={{ padding: '6px 14px', border: 'none', borderRadius: 8, background: C.blue, color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '.8rem' }}>View journal</button></Td>
+                          <Td><button onClick={() => loadJournal(r)} style={{ padding: '6px 14px', border: 'none', borderRadius: 8, background: C.blue, color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '.8rem' }}>{t('payroll.viewJournal')}</button></Td>
                         </tr>
                       ))}
                     </tbody>
@@ -348,23 +359,23 @@ export default function PayrollPage() {
               {journal && (
                 <div style={{ marginTop: 22 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
-                    <div style={{ fontWeight: 800, color: C.navy }}>Ledger journal · {journal.reference}</div>
-                    <div style={{ display: 'flex', gap: 8 }}><button onClick={copyJournal} style={outlineBtn()}>Copy</button><button onClick={exportJournalExcel} style={outlineBtn()}>⭳ Export Excel</button></div>
+                    <div style={{ fontWeight: 800, color: C.navy }}>{t('payroll.ledgerJournal')} · {journal.reference}</div>
+                    <div style={{ display: 'flex', gap: 8 }}><button onClick={copyJournal} style={outlineBtn()}>{t('payroll.copy')}</button><button onClick={exportJournalExcel} style={outlineBtn()}>⭳ {t('payroll.exportExcel')}</button></div>
                   </div>
                   <Card>
                     <div style={{ overflowX: 'auto' }}>
                       <table style={tbl()}>
-                        <thead><tr>{['Account', 'Description', 'Debit', 'Credit'].map((h, i) => <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', padding: '13px 16px', background: '#fafbfd', color: C.navy, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}</tr></thead>
+                        <thead><tr>{[t('payroll.th_account'), t('payroll.th_description'), t('payroll.th_debit'), t('payroll.th_credit')].map((h, i) => <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', padding: '13px 16px', background: '#fafbfd', color: C.navy, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}</tr></thead>
                         <tbody>
                           {journal.lines.map((l, i) => (
                             <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}><Td>{l.account}</Td><Td>{l.description}</Td><Td style={{ textAlign: 'right' }}>{l.debit ? num(l.debit) : ''}</Td><Td style={{ textAlign: 'right' }}>{l.credit ? num(l.credit) : ''}</Td></tr>
                           ))}
-                          <tr style={{ borderTop: `2px solid ${C.navy}` }}><Td /><Td style={{ fontWeight: 800 }}>TOTALS</Td><Td style={{ textAlign: 'right', fontWeight: 800 }}>{num(journal.totalDebit)}</Td><Td style={{ textAlign: 'right', fontWeight: 800 }}>{num(journal.totalCredit)}</Td></tr>
+                          <tr style={{ borderTop: `2px solid ${C.navy}` }}><Td /><Td style={{ fontWeight: 800 }}>{t('payroll.totals')}</Td><Td style={{ textAlign: 'right', fontWeight: 800 }}>{num(journal.totalDebit)}</Td><Td style={{ textAlign: 'right', fontWeight: 800 }}>{num(journal.totalCredit)}</Td></tr>
                         </tbody>
                       </table>
                     </div>
                   </Card>
-                  <div style={{ marginTop: 8, fontSize: '.82rem', fontWeight: 700, color: journal.balanced ? C.green : C.red }}>{journal.balanced ? '✓ Journal balances' : '✗ Journal does not balance — do not post'}</div>
+                  <div style={{ marginTop: 8, fontSize: '.82rem', fontWeight: 700, color: journal.balanced ? C.green : C.red }}>{journal.balanced ? '✓ ' + t('payroll.journalBalances') : '✗ ' + t('payroll.journalUnbalanced')}</div>
                 </div>
               )}
             </>
@@ -372,19 +383,19 @@ export default function PayrollPage() {
 
           {tab === 'reconcile' && (
             <>
-              <div style={{ color: C.muted, fontSize: '.88rem', marginBottom: 16, lineHeight: 1.6 }}>Upload the payment sheet Accounts actually paid and compare it, line by line, against a payroll run. Matches by <strong>Staff ID</strong>, then by <strong>Name</strong>. Figures are in the run’s own currency.</div>
+              <div style={{ color: C.muted, fontSize: '.88rem', marginBottom: 16, lineHeight: 1.6 }}>{t('payroll.reconIntro_pre')}<strong>{t('payroll.staffId')}</strong>{t('payroll.reconIntro_mid')}<strong>{t('payroll.name')}</strong>{t('payroll.reconIntro_post')}</div>
               <Card>
                 <div style={{ padding: 18, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                   <label style={{ fontSize: '.8rem', color: C.muted, fontWeight: 700 }}>
-                    <div style={{ marginBottom: 6 }}>Payroll run</div>
+                    <div style={{ marginBottom: 6 }}>{t('payroll.reconRunLabel')}</div>
                     <select value={reconRunId} onChange={(e) => { setReconRunId(e.target.value); setReconResult(null); }} style={{ padding: '10px 12px', border: '1px solid #d8e0ec', borderRadius: 10, minWidth: 240 }}>
-                      <option value="">— Select a run —</option>
-                      {runs.map((r) => <option key={r._id} value={r._id}>{r.label || r.period} · {money(r.totals?.net, r.currency)} net</option>)}
+                      <option value="">{t('payroll.selectRun')}</option>
+                      {runs.map((r) => <option key={r._id} value={r._id}>{r.label || r.period} · {money(r.totals?.net, r.currency)}{t('payroll.netSuffix')}</option>)}
                     </select>
                   </label>
-                  <button onClick={downloadReconTemplate} style={outlineBtn()}>Download template</button>
+                  <button onClick={downloadReconTemplate} style={outlineBtn()}>{t('payroll.downloadTemplate')}</button>
                   <input type="file" accept=".xlsx,.csv" onChange={(e) => { setReconFile(e.target.files?.[0] || null); setReconResult(null); }} />
-                  <button onClick={runReconcile} disabled={reconBusy} style={{ padding: '10px 18px', border: 'none', borderRadius: 10, background: C.navy, color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: reconBusy ? 0.6 : 1 }}>{reconBusy ? 'Comparing…' : 'Compare'}</button>
+                  <button onClick={runReconcile} disabled={reconBusy} style={{ padding: '10px 18px', border: 'none', borderRadius: 10, background: C.navy, color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: reconBusy ? 0.6 : 1 }}>{reconBusy ? t('payroll.comparing') : t('payroll.compare')}</button>
                 </div>
                 {reconErr && <div style={{ margin: '0 18px 16px', background: '#fdecec', border: '1px solid #f6c9cb', color: C.red, padding: '10px 13px', borderRadius: 10, fontSize: '.85rem' }}>{reconErr}</div>}
               </Card>
@@ -395,36 +406,36 @@ export default function PayrollPage() {
                 return (
                   <div style={{ marginTop: 22 }}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 14 }}>
-                      <Stat label="Matched" value={s.matched} />
-                      <Stat label="Mismatched" value={s.mismatched} accent={s.mismatched > 0} />
-                      <Stat label="Only in sheet" value={s.onlyInSheet} />
-                      <Stat label="Only in payroll" value={s.onlyInPayroll} />
-                      <Stat label="Difference" value={money(s.diffTotal, cur)} accent={!balanced} />
+                      <Stat label={t('payroll.stat_matched')} value={s.matched} />
+                      <Stat label={t('payroll.stat_mismatched')} value={s.mismatched} accent={s.mismatched > 0} />
+                      <Stat label={t('payroll.stat_onlySheet')} value={s.onlyInSheet} />
+                      <Stat label={t('payroll.stat_onlyPayroll')} value={s.onlyInPayroll} />
+                      <Stat label={t('payroll.stat_difference')} value={money(s.diffTotal, cur)} accent={!balanced} />
                     </div>
-                    <div style={{ fontSize: '.85rem', color: C.muted, marginBottom: 16 }}>Sheet total {money(s.sheetTotal, cur)} · Payroll total {money(s.payrollTotal, cur)} · <strong style={{ color: balanced ? C.green : C.red }}>{balanced ? ' In balance' : ' Out by ' + money(s.diffTotal, cur)}</strong></div>
+                    <div style={{ fontSize: '.85rem', color: C.muted, marginBottom: 16 }}>{t('payroll.sheetTotal')} {money(s.sheetTotal, cur)} · {t('payroll.payrollTotal')} {money(s.payrollTotal, cur)} · <strong style={{ color: balanced ? C.green : C.red }}>{balanced ? t('payroll.inBalance') : t('payroll.outBy') + money(s.diffTotal, cur)}</strong></div>
 
                     {reconResult.mismatches.length > 0 && (
                       <Card>
-                        <div style={{ padding: '12px 16px', fontWeight: 800, color: C.red }}>Amount mismatches ({reconResult.mismatches.length})</div>
+                        <div style={{ padding: '12px 16px', fontWeight: 800, color: C.red }}>{t('payroll.mismatchesTitle', { n: reconResult.mismatches.length })}</div>
                         <div style={{ overflowX: 'auto' }}><table style={tbl()}>
-                          <thead><tr>{['Staff ID', 'Name', 'Payroll', 'Sheet', 'Difference'].map((h, i) => <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', padding: '11px 16px', background: '#fafbfd', color: C.navy, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}</tr></thead>
+                          <thead><tr>{[t('payroll.staffId'), t('payroll.name'), t('payroll.th_payroll'), t('payroll.th_sheet'), t('payroll.th_difference')].map((h, i) => <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', padding: '11px 16px', background: '#fafbfd', color: C.navy, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}</tr></thead>
                           <tbody>{reconResult.mismatches.map((m, i) => <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}><Td>{m.staffId || '—'}</Td><Td>{m.name || '—'}</Td><Td style={{ textAlign: 'right' }}>{money(m.payroll, cur)}</Td><Td style={{ textAlign: 'right' }}>{money(m.sheet, cur)}</Td><Td style={{ textAlign: 'right', fontWeight: 700, color: C.red }}>{money(m.diff, cur)}</Td></tr>)}</tbody>
                         </table></div>
                       </Card>
                     )}
                     {reconResult.onlyInSheet.length > 0 && (
                       <div style={{ marginTop: 16 }}><Card>
-                        <div style={{ padding: '12px 16px', fontWeight: 800, color: C.navy }}>Paid on sheet, not in payroll ({reconResult.onlyInSheet.length})</div>
-                        <div style={{ overflowX: 'auto' }}><table style={tbl()}><thead><tr>{['Staff ID', 'Name', 'Amount'].map((h, i) => <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', padding: '11px 16px', background: '#fafbfd', color: C.navy, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}</tr></thead><tbody>{reconResult.onlyInSheet.map((m, i) => <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}><Td>{m.staffId || '—'}</Td><Td>{m.name || '—'}</Td><Td style={{ textAlign: 'right' }}>{money(m.amount, cur)}</Td></tr>)}</tbody></table></div>
+                        <div style={{ padding: '12px 16px', fontWeight: 800, color: C.navy }}>{t('payroll.onlySheetTitle', { n: reconResult.onlyInSheet.length })}</div>
+                        <div style={{ overflowX: 'auto' }}><table style={tbl()}><thead><tr>{[t('payroll.staffId'), t('payroll.name'), t('payroll.th_amount')].map((h, i) => <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', padding: '11px 16px', background: '#fafbfd', color: C.navy, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}</tr></thead><tbody>{reconResult.onlyInSheet.map((m, i) => <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}><Td>{m.staffId || '—'}</Td><Td>{m.name || '—'}</Td><Td style={{ textAlign: 'right' }}>{money(m.amount, cur)}</Td></tr>)}</tbody></table></div>
                       </Card></div>
                     )}
                     {reconResult.onlyInPayroll.length > 0 && (
                       <div style={{ marginTop: 16 }}><Card>
-                        <div style={{ padding: '12px 16px', fontWeight: 800, color: C.navy }}>In payroll, not on the sheet ({reconResult.onlyInPayroll.length})</div>
-                        <div style={{ overflowX: 'auto' }}><table style={tbl()}><thead><tr>{['Staff ID', 'Name', 'Payroll net'].map((h, i) => <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', padding: '11px 16px', background: '#fafbfd', color: C.navy, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}</tr></thead><tbody>{reconResult.onlyInPayroll.map((m, i) => <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}><Td>{m.staffId || '—'}</Td><Td>{m.name || '—'}</Td><Td style={{ textAlign: 'right' }}>{money(m.payroll, cur)}</Td></tr>)}</tbody></table></div>
+                        <div style={{ padding: '12px 16px', fontWeight: 800, color: C.navy }}>{t('payroll.onlyPayrollTitle', { n: reconResult.onlyInPayroll.length })}</div>
+                        <div style={{ overflowX: 'auto' }}><table style={tbl()}><thead><tr>{[t('payroll.staffId'), t('payroll.name'), t('payroll.th_payrollNet')].map((h, i) => <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', padding: '11px 16px', background: '#fafbfd', color: C.navy, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>)}</tr></thead><tbody>{reconResult.onlyInPayroll.map((m, i) => <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}><Td>{m.staffId || '—'}</Td><Td>{m.name || '—'}</Td><Td style={{ textAlign: 'right' }}>{money(m.payroll, cur)}</Td></tr>)}</tbody></table></div>
                       </Card></div>
                     )}
-                    {s.mismatched === 0 && s.onlyInSheet === 0 && s.onlyInPayroll === 0 && <div style={{ padding: 16, color: C.green, fontWeight: 800 }}>✓ Everything matches — the payment sheet agrees with payroll.</div>}
+                    {s.mismatched === 0 && s.onlyInSheet === 0 && s.onlyInPayroll === 0 && <div style={{ padding: 16, color: C.green, fontWeight: 800 }}>✓ {t('payroll.allMatch')}</div>}
                   </div>
                 );
               })()}
@@ -436,13 +447,13 @@ export default function PayrollPage() {
       {showRun && (
         <div onClick={() => setShowRun(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(1,33,88,.5)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'center', padding: 20, zIndex: 60 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 18, padding: 24, boxShadow: '0 18px 44px rgba(1,33,88,.3)', borderTop: `4px solid ${C.navy}` }}>
-            <h2 style={{ color: C.navy, fontSize: '1.25rem', fontWeight: 800, margin: '0 0 16px' }}>Run Payroll</h2>
-            <div style={{ fontSize: '.82rem', color: C.muted, fontWeight: 600, marginBottom: 6 }}>Period</div>
+            <h2 style={{ color: C.navy, fontSize: '1.25rem', fontWeight: 800, margin: '0 0 16px' }}>{t('payroll.runModalTitle')}</h2>
+            <div style={{ fontSize: '.82rem', color: C.muted, fontWeight: 600, marginBottom: 6 }}>{t('payroll.period')}</div>
             <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} style={{ width: '100%', padding: '11px 13px', border: '1px solid #d8e0ec', borderRadius: 10, marginBottom: 8 }} />
-            <div style={{ fontSize: '.8rem', color: C.muted, marginBottom: 16 }}>Pulls attendance, output and unpaid leave for the month, then applies your Compliance &amp; Statutory rates.</div>
+            <div style={{ fontSize: '.8rem', color: C.muted, marginBottom: 16 }}>{t('payroll.runModalHint')}</div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button onClick={() => setShowRun(false)} style={{ padding: '10px 18px', border: '1px solid #d8e0ec', borderRadius: 10, background: '#fff', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={runPayroll} disabled={busy} style={{ padding: '10px 18px', border: 'none', borderRadius: 10, background: C.navy, color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>{busy ? 'Running…' : 'Run payroll'}</button>
+              <button onClick={() => setShowRun(false)} style={{ padding: '10px 18px', border: '1px solid #d8e0ec', borderRadius: 10, background: '#fff', fontWeight: 600, cursor: 'pointer' }}>{t('common.cancel')}</button>
+              <button onClick={runPayroll} disabled={busy} style={{ padding: '10px 18px', border: 'none', borderRadius: 10, background: C.navy, color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>{busy ? t('payroll.running') : t('payroll.runPayroll')}</button>
             </div>
           </div>
         </div>
