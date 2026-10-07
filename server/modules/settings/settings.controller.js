@@ -42,6 +42,39 @@ const updateBranding = asyncHandler(async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ *
+ *  Company settings — the tenant-level base currency.
+ *  Payroll is always calculated and stored in the base currency, so this
+ *  is a significant, super-admin-only setting. The Tenant model validates
+ *  the code against the supported-currency catalogue (isSupportedCurrency),
+ *  so an unknown code is rejected automatically.
+ * ------------------------------------------------------------------ */
+const updateCompany = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+
+  const patch = {};
+  if (req.body.baseCurrency !== undefined) {
+    patch.baseCurrency = String(req.body.baseCurrency || '').toUpperCase();
+  }
+  if (!Object.keys(patch).length) {
+    return res.status(400).json({ message: 'Nothing to update' });
+  }
+
+  try {
+    const t = await master.model('Tenant')
+      .findByIdAndUpdate(req.tenant._id, patch, { new: true, runValidators: true });
+    if (!t) return res.status(404).json({ message: 'Workspace not found' });
+    res.json({
+      message: 'Company settings saved',
+      tenant: { name: t.name, subdomain: t.subdomain, countryCode: t.countryCode, baseCurrency: t.baseCurrency },
+    });
+  } catch (e) {
+    // Mongoose validation error (e.g. unsupported currency) → 400 not 500.
+    return res.status(400).json({ message: e?.errors?.baseCurrency?.message || e.message || 'Could not save company settings' });
+  }
+});
+
+/* ------------------------------------------------------------------ *
  *  Users & Roles (admin). Lets HR manage logins and — the key bit —
  *  LINK a login to an employee (User.employee), which powers Self-Service.
  * ------------------------------------------------------------------ */
@@ -74,4 +107,4 @@ const updateUser = asyncHandler(async (req, res) => {
   res.json({ message: 'User updated', user: u });
 });
 
-module.exports = { getBranding, updateBranding, listUsers, updateUser };
+module.exports = { getBranding, updateBranding, updateCompany, listUsers, updateUser };

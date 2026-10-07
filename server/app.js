@@ -61,6 +61,8 @@ app.use('/api/succession', require('./modules/succession/succession.routes'));
 app.use('/api/ai', require('./modules/ai/ai.routes'));
 app.use('/api/welfare', require('./modules/welfare/welfare.routes'));
 app.use('/api/notifications', require('./modules/notifications/notification.routes'));
+app.use('/api/fx', require('./modules/fx/fx.routes'));
+app.use('/api/v1', require('./modules/apikeys/externalApi.routes'));
 app.use(notFound);
 app.use(errorHandler);
 module.exports = app;

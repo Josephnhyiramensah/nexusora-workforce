@@ -47,6 +47,7 @@ export default function OnboardingPage() {
   const [tplOpen, setTplOpen] = useState(false);
   const [msg, setMsg] = useState('');
   const [reload, setReload] = useState(0);
+  const [obFilter, setObFilter] = useState('all');
   const refresh = useCallback(() => setReload((n) => n + 1), []);
 
   useEffect(() => {
@@ -66,7 +67,6 @@ export default function OnboardingPage() {
   const avg = items.length ? Math.round(items.reduce((a, o) => a + (o.progress?.pct || 0), 0) / items.length) : 0;
   const overdue = items.reduce((a, o) => a + (o.progress?.overdue || 0), 0);
   const completed = items.filter((o) => o.status === 'completed').length;
-  const [obFilter, setObFilter] = useState('all');
   const shown = obFilter === 'active' ? items.filter((o) => o.status !== 'completed' && o.status !== 'cancelled')
     : obFilter === 'overdue' ? items.filter((o) => (o.progress?.overdue || 0) > 0)
     : obFilter === 'completed' ? items.filter((o) => o.status === 'completed') : items;

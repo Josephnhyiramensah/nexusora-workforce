@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { User, Building2, Users, Shield, Code, Palette, Pencil, Power, Star, List } from 'lucide-react';
+import { User, Building2, Users, Shield, Code, Palette, Pencil, Power, Star, List, Settings as SettingsIcon, Coins } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { CURRENCIES, currencyName } from '../config/currencies';
 import PicklistsSettings from '../components/PicklistsSettings';
+import ApiKeysSettings from '../components/settings/ApiKeysSettings';
+import { ModuleShell, Hero, Body } from '../ui/kit';
 
 const C = { navy: '#012158', blue: '#3485E9', gold: '#C9A227', green: '#1f9d57', red: '#e5484d',
   ink: '#16233b', muted: '#8b96a9', line: '#e6ebf3', canvas: '#f4f7fc' };
@@ -20,15 +24,18 @@ const ROLES = [
 ];
 const roleLabel = (v) => ROLES.find((r) => r.value === v)?.label || v;
 
-const TABS = [
-  { key: 'profile', label: 'My Profile', Icon: User },
-  { key: 'company', label: 'Company & Letterhead', Icon: Building2 },
-  { key: 'users', label: 'Users & Roles', Icon: Users },
-  { key: 'security', label: 'Security', Icon: Shield },
-  { key: 'api', label: 'API Keys', Icon: Code, pro: true },
-  { key: 'whitelabel', label: 'White-label', Icon: Palette, pro: true },
-  { key: 'picklists', label: 'Lists', Icon: List },
+/* Settings sections — the rail groups (in-page navigation, SPA style) plus
+   the Hero copy shown for each section. `pro` gates a section behind a plan. */
+const SECTIONS = [
+  { key: 'profile',    group: 'Account',    label: 'My Profile',       Icon: User,        title: 'My Profile',        sub: 'Your name, sign-in details and personal preferences.' },
+  { key: 'company',    group: 'Workspace',  label: 'Company',          Icon: Building2,    title: 'Company & Letterhead', sub: 'Company details, branding and the base currency payroll runs in.' },
+  { key: 'users',      group: 'Workspace',  label: 'Users & Roles',    Icon: Users,        title: 'Users & Roles',     sub: 'Manage logins, roles and the employee each login is linked to.' },
+  { key: 'picklists',  group: 'Workspace',  label: 'Lists',            Icon: List,         title: 'Lists',             sub: 'The dropdown lists used across the workspace.' },
+  { key: 'security',   group: 'Governance', label: 'Security',         Icon: Shield,       title: 'Security',          sub: 'How sign-in credentials and sessions are handled.' },
+  { key: 'api',        group: 'Governance', label: 'API Keys',         Icon: Code,         title: 'API Keys',          sub: 'Connect Nexusora Workforce to external software.', pro: true },
+  { key: 'whitelabel', group: 'Governance', label: 'White-label',      Icon: Palette,      title: 'White-label',       sub: 'Apply your own brand colours and logo across the workspace.', pro: true },
 ];
+const sectionOf = (key) => SECTIONS.find((s) => s.key === key) || SECTIONS[0];
 
 export default function SettingsPage() {
   const { user, tenant } = useAuth();
@@ -36,46 +43,50 @@ export default function SettingsPage() {
   const [tab, setTab] = useState('profile');
   const [msg, setMsg] = useState('');
 
-  // Deep-link support: the header menu (Profile / Settings) opens a specific tab via ?tab=…
+  // Deep-link support: the profile menu can open a specific section via ?tab=…
   useEffect(() => {
     const t = searchParams.get('tab');
-    if (t && TABS.some((x) => x.key === t)) { setTab(t); setMsg(''); }
+    if (t && SECTIONS.some((x) => x.key === t)) { setTab(t); setMsg(''); }
   }, [searchParams]);
 
   const isPro = ['professional', 'enterprise'].includes(String(tenant?.plan || '').toLowerCase());
 
+  // Rail groups, grouped by the `group` field, in declaration order.
+  const groups = useMemo(() => {
+    const order = [];
+    const byGroup = {};
+    for (const s of SECTIONS) {
+      if (!byGroup[s.group]) { byGroup[s.group] = []; order.push(s.group); }
+      byGroup[s.group].push({ key: s.key, label: s.label, Icon: s.Icon });
+    }
+    return order.map((g) => ({ title: g, items: byGroup[g] }));
+  }, []);
+
+  const sec = sectionOf(tab);
+
   return (
-    <div style={{ background: '#f4f6f9', minHeight: '100%', padding: '20px 24px 48px' }}>
-      <h1 style={{ color: C.navy, fontSize: '1.25rem', fontWeight: 600, margin: '0 0 18px' }}>Settings</h1>
+    <ModuleShell
+      brand={{ title: 'Settings', subtitle: 'Workspace & account', Icon: SettingsIcon }}
+      groups={groups}
+      active={tab}
+      onSelect={(k) => { setTab(k); setMsg(''); }}
+    >
+      <Hero crumbs={['Settings', sec.label]} title={sec.title} subtitle={sec.sub} />
+      <div style={{ marginTop: -46, position: 'relative', zIndex: 5 }}>
+      <Body>
+        {msg && <Note>{msg}</Note>}
 
-      {/* Tabs (Books style) */}
-      <div style={{ display: 'flex', gap: 6, borderBottom: `1px solid ${C.line}`, marginBottom: 22, flexWrap: 'wrap' }}>
-        {TABS.map((t) => {
-          const on = tab === t.key;
-          return (
-            <button key={t.key} onClick={() => { setTab(t.key); setMsg(''); }}
-              style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, background: 'none',
-                border: 'none', cursor: 'pointer', padding: '12px 16px', fontWeight: 600, fontSize: '.9rem',
-                color: on ? C.navy : C.muted }}>
-              <t.Icon size={16} strokeWidth={1.9} />{t.label}
-              {on && <span style={{ position: 'absolute', left: 10, right: 10, bottom: -1, height: 3, background: C.blue, borderRadius: 3 }} />}
-            </button>
-          );
-        })}
+        {tab === 'profile' && <ProfileTab user={user} setMsg={setMsg} />}
+        {tab === 'company' && <CompanyTab setMsg={setMsg} />}
+        {tab === 'users' && <UsersTab me={user} setMsg={setMsg} />}
+        {tab === 'picklists' && <PicklistsSettings setMsg={setMsg} />}
+        {tab === 'security' && <SecurityTab />}
+        {tab === 'api' && <ApiKeysSettings setMsg={setMsg} />}
+        {tab === 'whitelabel' && <ProTab title="White-label" isPro={isPro}
+          blurb="Apply your own brand colours and logo across the workspace." />}
+      </Body>
       </div>
-
-      {msg && <Note>{msg}</Note>}
-
-      {tab === 'profile' && <ProfileTab user={user} setMsg={setMsg} />}
-      {tab === 'company' && <CompanyTab setMsg={setMsg} />}
-      {tab === 'users' && <UsersTab me={user} setMsg={setMsg} />}
-      {tab === 'picklists' && <PicklistsSettings setMsg={setMsg} />}
-      {tab === 'security' && <SecurityTab />}
-      {tab === 'api' && <ProTab title="API Keys" isPro={isPro}
-        blurb="Generate API keys to connect Nexusora Workforce to external software." />}
-      {tab === 'whitelabel' && <ProTab title="White-label" isPro={isPro}
-        blurb="Apply your own brand colours and logo across the workspace." />}
-    </div>
+    </ModuleShell>
   );
 }
 
@@ -84,6 +95,12 @@ function ProfileTab({ user, setMsg }) {
   const [name, setName] = useState(user?.name || '');
   const [saving, setSaving] = useState(false);
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+
+  // Per-user display currency — SuccessFactors-style personal preference.
+  // Payroll always runs in the company base currency; this only changes how
+  // amounts are shown to this user.
+  const { displayCurrency, setDisplayCurrency, baseCurrency } = useCurrency();
+  const currencyCodes = Array.from(new Set([baseCurrency, ...CURRENCIES.map((c) => c.code)]));
 
   async function saveProfile() {
     setSaving(true);
@@ -109,6 +126,24 @@ function ProfileTab({ user, setMsg }) {
         <PrimaryBtn onClick={saveProfile} disabled={saving}>{saving ? 'Saving…' : 'Save profile'}</PrimaryBtn>
       </Panel>
 
+      <Panel title="Preferences" sub="Personal settings that apply only to your account.">
+        <label style={{ display: 'block', marginBottom: 8 }}>
+          <div style={lbl()}>Display currency</div>
+          <select value={displayCurrency} onChange={(e) => setDisplayCurrency(e.target.value)} style={inp()}>
+            {currencyCodes.map((code) => (
+              <option key={code} value={code}>
+                {code} — {currencyName(code)}{code === baseCurrency ? ' · company base' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div style={{ fontSize: '.78rem', color: C.muted, lineHeight: 1.6 }}>
+          Amounts across the app are shown in this currency, converted at the latest exchange rate.
+          Payroll is always calculated and paid in the company base currency
+          (<strong>{baseCurrency}</strong>) — changing this never affects payroll.
+        </div>
+      </Panel>
+
       <Panel title="Change password" sub="Use at least 8 characters.">
         <Field label="Current password" type="password" value={pw.currentPassword} onChange={(v) => setPw((s) => ({ ...s, currentPassword: v }))} />
         <Field label="New password" type="password" value={pw.newPassword} onChange={(v) => setPw((s) => ({ ...s, newPassword: v }))} />
@@ -121,15 +156,27 @@ function ProfileTab({ user, setMsg }) {
 
 /* ---------------- Company & Letterhead ---------------- */
 function CompanyTab({ setMsg }) {
+  const { user, tenant } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
+
   const [b, setB] = useState({ letterhead: '', logo: '', companyName: '', address: '', phone: '', email: '', website: '', footerNote: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // Base currency (tenant-level). Comes from /settings/branding (which returns tenant),
+  // falling back to the tenant in context.
+  const [baseCurrency, setBaseCurrency] = useState(String(tenant?.baseCurrency || '').toUpperCase());
+  const [savedBase, setSavedBase] = useState(String(tenant?.baseCurrency || '').toUpperCase());
+  const [savingCur, setSavingCur] = useState(false);
+  const baseCodes = Array.from(new Set([savedBase, ...CURRENCIES.map((c) => c.code)].filter(Boolean)));
 
   useEffect(() => {
     (async () => {
       try {
         const { data } = await api.get('/settings/branding');
         setB((s) => ({ ...s, ...(data.branding || {}), companyName: data.branding?.companyName || data.tenant?.name || '' }));
+        const cur = String(data.tenant?.baseCurrency || tenant?.baseCurrency || '').toUpperCase();
+        if (cur) { setBaseCurrency(cur); setSavedBase(cur); }
       } catch { /* defaults */ }
       finally { setLoading(false); }
     })();
@@ -154,6 +201,17 @@ function CompanyTab({ setMsg }) {
     try { await api.put('/settings/branding', b); setMsg('Company details and letterhead saved.'); }
     catch (e) { setMsg(e?.response?.data?.message || 'Could not save'); }
     finally { setSaving(false); }
+  }
+  async function saveBaseCurrency() {
+    setSavingCur(true);
+    try {
+      await api.put('/settings/company', { baseCurrency });
+      setSavedBase(baseCurrency);
+      setMsg(`Base currency set to ${baseCurrency}. Reloading so it applies everywhere…`);
+      setTimeout(() => window.location.reload(), 1300);
+    } catch (e) {
+      setMsg(e?.response?.data?.message || 'Could not save base currency');
+    } finally { setSavingCur(false); }
   }
 
   if (loading) return <div style={{ color: C.muted, padding: 30 }}>Loading…</div>;
@@ -180,6 +238,25 @@ function CompanyTab({ setMsg }) {
           <Field label="Address" value={b.address} onChange={(v) => setB((s) => ({ ...s, address: v }))} />
         </Row>
         <PrimaryBtn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save company information'}</PrimaryBtn>
+      </Panel>
+
+      <Panel title="Base currency" sub="The currency payroll is calculated and paid in across this workspace.">
+        <label style={{ display: 'block', marginBottom: 10 }}>
+          <div style={lbl()}>Company base currency</div>
+          <select value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value)} disabled={!isSuperAdmin}
+            style={{ ...inp(), background: isSuperAdmin ? '#fff' : '#f7f9fc' }}>
+            {baseCodes.map((code) => <option key={code} value={code}>{code} — {currencyName(code)}</option>)}
+          </select>
+        </label>
+        <div style={{ display: 'flex', gap: 10, fontSize: '.8rem', color: '#8a5a00', background: '#fff6e6', border: '1px solid #ffe0a3', borderRadius: 10, padding: '10px 12px', marginBottom: 14, lineHeight: 1.55 }}>
+          <Coins size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>Changing the base currency affects how <strong>new</strong> payroll runs are calculated. Existing, already-processed payroll keeps its original currency. Set this before your first live payroll run.</span>
+        </div>
+        {isSuperAdmin
+          ? <PrimaryBtn onClick={saveBaseCurrency} disabled={savingCur || !baseCurrency || baseCurrency === savedBase}>
+              {savingCur ? 'Saving…' : baseCurrency === savedBase ? 'Saved' : 'Save base currency'}
+            </PrimaryBtn>
+          : <div style={{ fontSize: '.82rem', color: C.muted }}>Only a Super Admin can change the base currency.</div>}
       </Panel>
 
       <Panel title="Letterhead & print settings" sub="These details appear on payslips, payroll sheets and reports.">

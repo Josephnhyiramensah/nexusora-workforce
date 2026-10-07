@@ -34,6 +34,8 @@ function registerAllModels(conn) {
     require('./tenant/WelfareClaim'),
     require('./tenant/WelfareScheme'),
     require('./tenant/Notification'),
+    require('./tenant/ExchangeRate'),
+    require('./tenant/ApiKey'),
   ];
   for (const def of defs) {
     if (!conn.models[def.modelName]) conn.model(def.modelName, def.schema);
