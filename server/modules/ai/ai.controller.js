@@ -3,6 +3,7 @@ const ExcelJS = require('exceljs');
 const ai = require('../../services/ai.service');
 const { METRICS, metricCatalogue, computeMetric, contextPack, loadEmployees } = require('../../services/aiMetrics');
 const { identityPrompt, COMPANY } = require('../../config/company');
+const xlsxDash = require('../../services/excelDashboard.service');
 
 /* ============================ STATUS ============================ */
 // GET /ai/status — lets the UI show a clear "not configured" state instead of failing.
@@ -181,4 +182,103 @@ const analyzeUpload = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { status, insights, chat, buildDashboard, analyzeUpload };
+/* ==================== AI → INTERACTIVE EXCEL DASHBOARD ==================== */
+function brandOf(tenant) {
+  const b = tenant?.branding || {};
+  return { primary: b.primaryColor || '#012158', accent: b.accentColor || '#168eff' };
+}
+function streamWorkbook(res, buffer, title) {
+  const safe = String(title || 'HR_Dashboard').replace(/[^\w\-]+/g, '_').replace(/_+/g, '_').slice(0, 60) || 'HR_Dashboard';
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${safe}.xlsx"`);
+  res.setHeader('X-Dashboard-Title', encodeURIComponent(title || ''));
+  res.send(buffer);
+}
+
+// POST /ai/excel/system  { prompt }  → interactive Excel dashboard from live system data.
+const excelFromSystem = asyncHandler(async (req, res) => {
+  if (!ai.isConfigured()) return res.status(503).json({ message: 'AI is not configured on the server.' });
+  const prompt = String(req.body.prompt || '').trim();
+  const employees = await loadEmployees(req.tenantConn);
+  const rows = xlsxDash.rowsFromEmployees(employees);
+  if (!rows.length) return res.status(422).json({ message: 'No employee records to analyse yet.' });
+  const schema = xlsxDash.profileRows(rows);
+  const spec = await xlsxDash.specFromPrompt({
+    prompt, schema,
+    title: req.tenant?.name ? `${req.tenant.name} — Workforce Analytics` : 'Workforce Analytics Dashboard',
+    brand: brandOf(req.tenant), currency: req.tenant?.baseCurrency,
+  });
+  const { buffer } = await xlsxDash.generate({ rows, spec });
+  streamWorkbook(res, buffer, spec.title);
+});
+
+// POST /ai/excel/upload  (multipart "file", field "prompt")  → dashboard from uploaded data.
+const excelFromUpload = asyncHandler(async (req, res) => {
+  if (!ai.isConfigured()) return res.status(503).json({ message: 'AI is not configured on the server.' });
+  if (!req.file) return res.status(400).json({ message: 'Upload a CSV or Excel file (field "file").' });
+  const { headers, rows } = await parseUpload(req.file);
+  if (!headers.length || !rows.length) return res.status(422).json({ message: 'Could not read any rows from that file.' });
+  const prompt = String(req.body.prompt || '').trim();
+  const schema = xlsxDash.profileRows(rows);
+  const spec = await xlsxDash.specFromPrompt({
+    prompt, schema,
+    title: `Analysis — ${req.file.originalname.replace(/\.[^.]+$/, '')}`,
+    brand: brandOf(req.tenant), currency: req.tenant?.baseCurrency,
+  });
+  const { buffer } = await xlsxDash.generate({ rows, spec });
+  streamWorkbook(res, buffer, spec.title);
+});
+
+/* ---- In-web dashboard builder: dataset → (AI suggest) → live preview → export ---- */
+
+// GET /ai/dataset/system → flattened employee rows + column profile for the builder.
+const datasetSystem = asyncHandler(async (req, res) => {
+  const rows = xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn));
+  res.json({ columns: xlsxDash.profileRows(rows), rows, source: 'system', count: rows.length });
+});
+
+// POST /ai/dataset/upload (multipart "file") → parsed rows + column profile.
+const datasetUpload = asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'Upload a CSV or Excel file (field "file").' });
+  const { headers, rows } = await parseUpload(req.file);
+  if (!headers.length || !rows.length) return res.status(422).json({ message: 'Could not read any rows from that file.' });
+  res.json({ columns: xlsxDash.profileRows(rows), rows, source: 'upload', file: req.file.originalname, count: rows.length });
+});
+
+// POST /ai/spec/suggest { schema, prompt, title } → an AI-designed spec to pre-fill the builder.
+const specSuggest = asyncHandler(async (req, res) => {
+  if (!ai.isConfigured()) return res.status(503).json({ message: 'AI is not configured on the server.' });
+  const schema = Array.isArray(req.body.schema) ? req.body.schema : [];
+  if (!schema.length) return res.status(400).json({ message: 'No column schema provided.' });
+  const spec = await xlsxDash.specFromPrompt({
+    prompt: String(req.body.prompt || ''), schema, title: req.body.title,
+    brand: brandOf(req.tenant), currency: req.tenant?.baseCurrency,
+  });
+  res.json({ spec });
+});
+
+// POST /ai/excel/build { spec, source, rows? } → build the workbook from a finished spec.
+// No AI needed — this is the user's own design. For system source we re-load rows
+// server-side; for an upload the client sends back the rows it is previewing.
+const excelBuild = asyncHandler(async (req, res) => {
+  const spec = req.body.spec || {};
+  let rows;
+  if (req.body.source === 'system') {
+    rows = xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn));
+  } else {
+    rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+  }
+  if (!rows.length) return res.status(422).json({ message: 'No data to build from.' });
+  const schema = xlsxDash.profileRows(rows);
+  const clean = xlsxDash.sanitizeSpec(spec, schema, {
+    title: spec.title, brand: brandOf(req.tenant), currency: req.tenant?.baseCurrency,
+  });
+  const { buffer } = await xlsxDash.generate({ rows, spec: clean });
+  streamWorkbook(res, buffer, clean.title);
+});
+
+module.exports = {
+  status, insights, chat, buildDashboard, analyzeUpload,
+  excelFromSystem, excelFromUpload,
+  datasetSystem, datasetUpload, specSuggest, excelBuild,
+};

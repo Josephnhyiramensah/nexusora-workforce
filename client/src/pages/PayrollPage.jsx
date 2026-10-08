@@ -11,14 +11,6 @@ import { formatMoney } from '../ui/tokens';
 const C = { navy: '#012158', blue: '#3485E9', orange: '#FD9C09', gold: '#C9A227', green: '#1f9d57',
   red: '#e5484d', ink: '#16233b', muted: '#8b96a9', line: '#e6ebf3', card: '#fff' };
 
-const TIMEPAY_RAIL = {
-  brand: { title: 'Time & Pay', subtitle: 'Attendance to payroll', Icon: CalendarClock },
-  groups: [
-    { title: 'Time', items: [{ label: 'Attendance', to: '/attendance', Icon: CalendarClock }, { label: 'Leave', to: '/leave', Icon: CalendarDays }] },
-    { title: 'Pay', items: [{ label: 'Payroll', to: '/payroll', Icon: Wallet }, { label: 'Compliance', to: '/compliance', Icon: ShieldCheck }] },
-  ],
-};
-
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const num = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const money = (n, c) => formatMoney(n, c, { maximumFractionDigits: 2 });

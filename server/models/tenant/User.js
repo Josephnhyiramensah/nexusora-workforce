@@ -15,6 +15,11 @@ const schema = new mongoose.Schema({
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
   twoFactorEnabled: { type: Boolean, default: false },
   twoFactorSecret: { type: String, select: false },
+  // Provisional secret held during enrolment; promoted to twoFactorSecret only
+  // once the user proves possession by verifying a code against it.
+  twoFactorPendingSecret: { type: String, select: false },
+  // bcrypt hashes of single-use recovery codes (never the plaintext).
+  twoFactorBackupCodes: { type: [String], select: false, default: undefined },
   isActive: { type: Boolean, default: true },
   mustChangePassword: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
@@ -27,6 +32,27 @@ schema.pre('save', async function (next) {
 });
 schema.methods.matchPassword = function (entered) {
   return bcrypt.compare(entered, this.password);
+};
+
+// Verify a candidate backup code and, on success, BURN it (single-use).
+// The doc must be fetched with .select('+twoFactorBackupCodes'). Normalisation
+// (strip non-alphanumerics, uppercase) mirrors the canonical hashed form.
+schema.methods.verifyAndBurnBackupCode = async function (candidate) {
+  const codes = this.twoFactorBackupCodes;
+  if (!Array.isArray(codes) || codes.length === 0) return false;
+  const normalised = String(candidate || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  if (!normalised) return false;
+  for (let i = 0; i < codes.length; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const match = await bcrypt.compare(normalised, codes[i]);
+    if (match) {
+      codes.splice(i, 1);
+      this.markModified('twoFactorBackupCodes');
+      await this.save({ validateBeforeSave: false });
+      return true;
+    }
+  }
+  return false;
 };
 
 module.exports = { schema, modelName: 'User', ROLES };

@@ -29,12 +29,22 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (subdomain, email, password) => {
     setSubdomain(String(subdomain).trim().toLowerCase());
     const { data } = await api.post('/auth/login', { email, password });
+    // If the account has 2FA enabled, the server withholds the session and
+    // returns a challenge; the caller then collects a code and calls verifyTwoFactor.
+    if (data.twoFactorRequired) return { twoFactorRequired: true, challengeToken: data.challengeToken };
+    setToken(data.token); setUser(data.user); setTenant(data.tenant);
+    return data;
+  }, []);
+
+  // Step 2 of login for 2FA accounts. Pass { challengeToken, code } or { challengeToken, backupCode }.
+  const verifyTwoFactor = useCallback(async ({ challengeToken, code, backupCode }) => {
+    const { data } = await api.post('/auth/2fa/login', { challengeToken, token: code, backupCode });
     setToken(data.token); setUser(data.user); setTenant(data.tenant);
     return data;
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, tenant, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, tenant, loading, login, verifyTwoFactor, logout }}>
       {children}
     </AuthContext.Provider>
   );

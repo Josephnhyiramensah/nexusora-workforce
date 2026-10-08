@@ -1,0 +1,5 @@
+# Nexusora Workforce — AI analytics engine (Python worker).
+# Install on the server:  pip3 install -r server/python/requirements.txt
+pandas>=2.0
+XlsxWriter>=3.1
+openpyxl>=3.1

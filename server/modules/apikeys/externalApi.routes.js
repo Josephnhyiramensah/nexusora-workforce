@@ -15,7 +15,7 @@ const { authenticateApiKey, requireScope } = require('./apikey.controller');
 router.use(resolveTenant);
 router.use(authenticateApiKey);
 
-const empProjection = 'staffId firstName lastName email jobDetails.department jobDetails.grade jobDetails.employmentType status createdAt';
+const empProjection = 'staffId firstName lastName email employment.department employment.grade employment.employmentType status createdAt';
 
 // GET /api/v1/employees?limit=&page=&status=&q=
 router.get('/employees', requireScope('employees'), asyncHandler(async (req, res) => {
@@ -38,7 +38,7 @@ router.get('/employees', requireScope('employees'), asyncHandler(async (req, res
 // GET /api/v1/employees/:id
 router.get('/employees/:id', requireScope('employees'), asyncHandler(async (req, res) => {
   const Employee = req.tenantConn.model('Employee');
-  const emp = await Employee.findById(req.params.id).select(empProjection + ' compensation jobDetails').lean();
+  const emp = await Employee.findById(req.params.id).select(empProjection + ' compensation employment gender nationality').lean();
   if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
   res.json({ success: true, data: emp });
 }));

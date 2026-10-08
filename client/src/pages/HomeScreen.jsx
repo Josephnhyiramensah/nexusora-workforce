@@ -185,8 +185,9 @@ export default function HomeScreen() {
 
 const menuItem = { width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 15px', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', fontSize: '.85rem', fontWeight: 600, color: '#16233b', fontFamily: 'inherit' };
 
+const NoIcon = () => null;
 function Tile({ item, tr }) {
-  const Icon = item.Icon || item.icon || (() => null);
+  const Icon = item.Icon || item.icon || NoIcon;
   const accent = item.accent || '#3485E9';
   const live = item.live !== false && !!item.to;
   const label = item.labelKey ? tr(item.labelKey) : item.label;

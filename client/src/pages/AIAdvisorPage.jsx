@@ -1,10 +1,12 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import api from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { exportSections, openPrintable } from '../utils/exporter';
 import { ModuleShell } from '../ui/kit';
+import { applyDerived, filterRows, uniqueValues, kpiValue, breakdownSeries, fmtValue } from '../utils/dashboardCompute';
 import {
   Sparkles, MessageSquare, Wand2, Upload, Send, RefreshCw,
-  Download, TrendingUp, ShieldAlert, Lightbulb,
+  Download, TrendingUp, ShieldAlert, Lightbulb, Plus, Trash2, Filter, Database, Table2,
 } from 'lucide-react';
 
 const C = { navy: '#012158', blue: '#3485E9', orange: '#FD9C09', green: '#1f9d57', red: '#e5484d',
@@ -28,6 +30,9 @@ export default function AIAdvisorPage() {
       { key: 'builder', label: 'Dashboard Builder', Icon: Wand2 },
       { key: 'upload', label: 'Analyze Upload', Icon: Upload },
     ] },
+    { title: 'Interactive Excel', items: [
+      { key: 'excel', label: 'Dashboard Builder', Icon: Table2 },
+    ] },
   ];
 
   return (
@@ -39,6 +44,7 @@ export default function AIAdvisorPage() {
           {section === 'ask' && <Ask />}
           {section === 'builder' && <DashboardBuilder />}
           {section === 'upload' && <AnalyzeUpload />}
+          {section === 'excel' && <ExcelStudio />}
         </>}
         {!cfg && <div style={{ color: C.muted, padding: 40 }}>Loading…</div>}
       </div>
@@ -344,6 +350,248 @@ function seriesColumns(w) {
 function seriesRows(w) { return w.series || []; }
 
 /* ============================ shared UI ============================ */
+/* ==================== IN-WEB DASHBOARD BUILDER + EXCEL EXPORT ==================== */
+const AGG_OPTS = [['count', 'Count'], ['sum', 'Sum'], ['mean', 'Average'], ['ratio', 'Ratio %'], ['distinct', 'Distinct']];
+const BD_AGG_OPTS = [['count', 'Count'], ['sum', 'Sum'], ['mean', 'Average']];
+const CHART_OPTS = [['column', 'Column'], ['bar', 'Bar'], ['pie', 'Pie'], ['line', 'Line']];
+const FMT_OPTS = [['int', 'Number'], ['float', 'Decimal'], ['money', 'Money'], ['pct', 'Percent']];
+
+function defaultSpec(cols) {
+  const cs = cols.filter((c) => c.type === 'category' && c.distinct > 1 && c.distinct <= 60).map((c) => c.name);
+  const ns = cols.filter((c) => c.type === 'number').map((c) => c.name);
+  const sal = ns.find((n) => /salary|pay|wage|net|gross/i.test(n));
+  const statusCol = cols.find((c) => /status/i.test(c.name));
+  const kpis = [{ label: 'Headcount', agg: 'count', format: 'int' }];
+  if (sal) { kpis.push({ label: `Average ${sal}`, agg: 'mean', field: sal, format: 'money' }); kpis.push({ label: `Total ${sal}`, agg: 'sum', field: sal, format: 'money' }); }
+  if (statusCol) kpis.push({ label: 'Attrition', agg: 'ratio', field: statusCol.name, match: 'terminated', format: 'pct' });
+  const bds = cs.slice(0, 3).map((c, i) => ({ title: `Headcount by ${c}`, by: c, agg: 'count', chart: i === 2 ? 'pie' : 'column', format: 'int', top: 12 }));
+  if (sal && cs[0]) bds.push({ title: `Average ${sal} by ${cs[0]}`, by: cs[0], agg: 'mean', field: sal, chart: 'bar', format: 'money', top: 12 });
+  const ageCol = ns.find((n) => /age/i.test(n));
+  const derived = ageCol ? [{ name: 'ageBand', from: ageCol, type: 'bucket', bins: [25, 30, 40, 50], labels: ['<25', '25-29', '30-39', '40-49', '50+'] }] : [];
+  return { title: 'Workforce Analytics Dashboard', selector: cs[0] || '', kpis: kpis.slice(0, 4), breakdowns: bds.slice(0, 6), derived };
+}
+const normalizeSpec = (s) => ({ title: s.title || 'Workforce Analytics Dashboard', selector: s.selector || '', kpis: Array.isArray(s.kpis) ? s.kpis : [], breakdowns: Array.isArray(s.breakdowns) ? s.breakdowns : [], derived: Array.isArray(s.derived) ? s.derived : [] });
+const errMsg = async (e) => { let m = e?.response?.data?.message; try { const t = await e?.response?.data?.text?.(); if (t) m = JSON.parse(t).message || m; } catch { /* */ } return m || 'Something went wrong.'; };
+
+function ExcelStudio() {
+  const { tenant } = useAuth();
+  const currency = tenant?.baseCurrency || '';
+  const [step, setStep] = useState('source');       // 'source' | 'build'
+  const [source, setSource] = useState('system');
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [columns, setColumns] = useState([]);
+  const [spec, setSpec] = useState(null);
+  const [filterVal, setFilterVal] = useState('(All)');
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [err, setErr] = useState('');
+  const [done, setDone] = useState('');
+
+  const cats = columns.filter((c) => c.type === 'category' && c.distinct > 1 && c.distinct <= 60).map((c) => c.name);
+  const nums = columns.filter((c) => c.type === 'number').map((c) => c.name);
+  const derivedNames = (spec?.derived || []).map((d) => d.name);
+  const byOpts = [...cats, ...derivedNames];
+
+  function apply(data) {
+    setRows(data.rows || []); setColumns(data.columns || []);
+    setSpec(defaultSpec(data.columns || [])); setFilterVal('(All)'); setStep('build'); setDone('');
+  }
+  async function loadSystem() { setErr(''); setLoading(true); try { const { data } = await api.get('/ai/dataset/system'); if (!data.rows?.length) { setErr('No employee records to analyse yet.'); } else apply(data); } catch (e) { setErr(await errMsg(e)); } finally { setLoading(false); } }
+  async function loadUpload() { if (!file) { setErr('Choose a CSV or Excel file first.'); return; } setErr(''); setLoading(true); try { const fd = new FormData(); fd.append('file', file); const { data } = await api.post('/ai/dataset/upload', fd); apply(data); } catch (e) { setErr(await errMsg(e)); } finally { setLoading(false); } }
+
+  async function suggest() { setAiBusy(true); setErr(''); try { const { data } = await api.post('/ai/spec/suggest', { schema: columns, prompt: aiPrompt, title: spec?.title }); if (data.spec) { setSpec(normalizeSpec(data.spec)); setFilterVal('(All)'); } } catch (e) { setErr(await errMsg(e)); } finally { setAiBusy(false); } }
+
+  async function download() {
+    setExporting(true); setErr(''); setDone('');
+    try {
+      const body = { spec, source }; if (source !== 'system') body.rows = rows;
+      const resp = await api.post('/ai/excel/build', body, { responseType: 'blob' });
+      const cd = resp.headers?.['content-disposition'] || ''; const m = /filename="?([^"]+)"?/.exec(cd);
+      const fname = (m && m[1]) || 'HR_Dashboard.xlsx';
+      const url = URL.createObjectURL(new Blob([resp.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      setDone(`Downloaded “${fname}”.`);
+    } catch (e) { setErr(await errMsg(e)); } finally { setExporting(false); }
+  }
+
+  // ---- live preview compute (mirrors the engine) ----
+  const drows = useMemo(() => applyDerived(rows, spec?.derived), [rows, spec]);
+  const selVals = spec?.selector ? ['(All)', ...uniqueValues(drows, spec.selector)] : [];
+  const frows = useMemo(() => filterRows(drows, spec?.selector, filterVal), [drows, spec, filterVal]);
+
+  // ---- spec mutators ----
+  const setSpecField = (k, v) => setSpec((s) => ({ ...s, [k]: v }));
+  const updKpi = (i, patch) => setSpec((s) => ({ ...s, kpis: s.kpis.map((k, j) => j === i ? { ...k, ...patch } : k) }));
+  const updBd = (i, patch) => setSpec((s) => ({ ...s, breakdowns: s.breakdowns.map((b, j) => j === i ? { ...b, ...patch } : b) }));
+  const addKpi = () => setSpec((s) => ({ ...s, kpis: [...s.kpis, { label: 'New KPI', agg: 'count', format: 'int' }].slice(0, 4) }));
+  const addBd = () => setSpec((s) => ({ ...s, breakdowns: [...s.breakdowns, { title: 'New breakdown', by: byOpts[0] || '', agg: 'count', chart: 'column', format: 'int', top: 12 }].slice(0, 6) }));
+  const delKpi = (i) => setSpec((s) => ({ ...s, kpis: s.kpis.filter((_, j) => j !== i) }));
+  const delBd = (i) => setSpec((s) => ({ ...s, breakdowns: s.breakdowns.filter((_, j) => j !== i) }));
+
+  if (step === 'source') {
+    return (
+      <>
+        <PageHead title="Dashboard Builder" subtitle="Build an interactive dashboard in the browser, then export it to professional Excel." />
+        <Card>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+            <SrcTab active={source === 'system'} onClick={() => setSource('system')} Icon={Database} label="From system data" />
+            <SrcTab active={source === 'upload'} onClick={() => setSource('upload')} Icon={Upload} label="Upload a file" />
+          </div>
+          {source === 'upload' && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: '.78rem', color: C.muted, fontWeight: 700, marginBottom: 6 }}>Data file (CSV or Excel)</div>
+              <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] || null)} style={{ fontSize: '.86rem' }} />
+              {file && <span style={{ marginLeft: 10, fontSize: '.82rem', color: C.ink }}>{file.name}</span>}
+            </div>
+          )}
+          {err && <ErrBox>{err}</ErrBox>}
+          <button onClick={source === 'system' ? loadSystem : loadUpload} disabled={loading}
+            style={primaryBtnStyle(loading)}>
+            {loading ? <RefreshCw size={16} /> : <Table2 size={16} />} {loading ? 'Loading data…' : 'Load data & start building'}
+          </button>
+          <div style={{ fontSize: '.76rem', color: C.muted, marginTop: 12, lineHeight: 1.6 }}>
+            You'll pick KPIs, breakdowns and a filter, see the dashboard update live, then download it as an interactive Excel workbook.
+          </div>
+        </Card>
+      </>
+    );
+  }
+
+  // BUILD step
+  return (
+    <>
+      <PageHead title="Dashboard Builder"
+        subtitle={`${rows.length.toLocaleString()} rows · ${columns.length} columns`}
+        action={<button onClick={() => { setStep('source'); setErr(''); setDone(''); }} style={ghostBtnStyle}>← Change data</button>} />
+
+      {/* AI suggest */}
+      <Card title="Design with AI (optional)">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g. attrition and avg salary by department and grade, with a gender split"
+            style={{ flex: 1, minWidth: 220, padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, fontSize: '.88rem', fontFamily: 'inherit', color: C.ink }} />
+          <button onClick={suggest} disabled={aiBusy} style={primaryBtnStyle(aiBusy, true)}>{aiBusy ? <RefreshCw size={15} /> : <Sparkles size={15} />} {aiBusy ? 'Thinking…' : 'Suggest'}</button>
+        </div>
+      </Card>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 420px) 1fr', gap: 16, alignItems: 'start' }} className="nx-builder-grid">
+        {/* -------- LEFT: controls -------- */}
+        <div>
+          <Card title="Dashboard">
+            <Lbl2>Title</Lbl2>
+            <input value={spec.title} onChange={(e) => setSpecField('title', e.target.value)} style={inp2} />
+            <Lbl2>Interactive filter</Lbl2>
+            <select value={spec.selector || ''} onChange={(e) => { setSpecField('selector', e.target.value); setFilterVal('(All)'); }} style={inp2}>
+              <option value="">— none —</option>
+              {byOpts.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </Card>
+
+          <Card title="KPIs">
+            {spec.kpis.map((k, i) => (
+              <div key={i} style={editRow}>
+                <input value={k.label} onChange={(e) => updKpi(i, { label: e.target.value })} placeholder="Label" style={{ ...inpXs, flex: '1 1 120px' }} />
+                <select value={k.agg} onChange={(e) => updKpi(i, { agg: e.target.value })} style={inpXs}>{AGG_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                {k.agg !== 'count' && (
+                  <select value={k.field || ''} onChange={(e) => updKpi(i, { field: e.target.value })} style={inpXs}>
+                    <option value="">field…</option>
+                    {(k.agg === 'sum' || k.agg === 'mean' ? nums : columns.map((c) => c.name)).map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                )}
+                {k.agg === 'ratio' && <input value={k.match || ''} onChange={(e) => updKpi(i, { match: e.target.value })} placeholder="match" style={{ ...inpXs, width: 90 }} />}
+                <select value={k.format || 'int'} onChange={(e) => updKpi(i, { format: e.target.value })} style={inpXs}>{FMT_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                <button onClick={() => delKpi(i)} title="Remove" style={delBtn}><Trash2 size={13} /></button>
+              </div>
+            ))}
+            {spec.kpis.length < 4 && <button onClick={addKpi} style={addBtn}><Plus size={14} /> Add KPI</button>}
+          </Card>
+
+          <Card title="Breakdowns & charts">
+            {spec.breakdowns.map((b, i) => (
+              <div key={i} style={{ ...editRow, flexWrap: 'wrap' }}>
+                <input value={b.title} onChange={(e) => updBd(i, { title: e.target.value })} placeholder="Title" style={{ ...inpXs, flex: '1 1 100%' }} />
+                <select value={b.by} onChange={(e) => updBd(i, { by: e.target.value })} style={inpXs}>{byOpts.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                <select value={b.agg} onChange={(e) => updBd(i, { agg: e.target.value })} style={inpXs}>{BD_AGG_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                {(b.agg === 'sum' || b.agg === 'mean') && (
+                  <select value={b.field || ''} onChange={(e) => updBd(i, { field: e.target.value })} style={inpXs}><option value="">field…</option>{nums.map((n) => <option key={n} value={n}>{n}</option>)}</select>
+                )}
+                <select value={b.chart} onChange={(e) => updBd(i, { chart: e.target.value })} style={inpXs}>{CHART_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                <button onClick={() => delBd(i)} title="Remove" style={delBtn}><Trash2 size={13} /></button>
+              </div>
+            ))}
+            {spec.breakdowns.length < 6 && <button onClick={addBd} style={addBtn}><Plus size={14} /> Add breakdown</button>}
+          </Card>
+
+          {err && <ErrBox>{err}</ErrBox>}
+          {done && <div style={{ background: '#eafaf0', border: '1px solid #bfe6cd', color: '#12703f', padding: '10px 13px', borderRadius: 9, fontSize: '.85rem', marginBottom: 12 }}>{done}</div>}
+          <button onClick={download} disabled={exporting} style={{ ...primaryBtnStyle(exporting), width: '100%', justifyContent: 'center' }}>
+            {exporting ? <RefreshCw size={16} /> : <Download size={16} />} {exporting ? 'Building Excel…' : 'Download interactive Excel'}
+          </button>
+        </div>
+
+        {/* -------- RIGHT: live preview -------- */}
+        <div>
+          <Card>
+            <div style={{ background: 'linear-gradient(120deg,#012158,#0b3f96)', margin: -16, marginBottom: 14, padding: '16px 18px', borderRadius: '14px 14px 0 0' }}>
+              <div style={{ color: '#fff', fontWeight: 800, fontSize: '1.05rem' }}>{spec.title || 'Dashboard'}</div>
+              <div style={{ color: '#cfe0f6', fontSize: '.76rem', marginTop: 2 }}>Live preview · {frows.length.toLocaleString()} of {rows.length.toLocaleString()} rows</div>
+            </div>
+            {spec.selector && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <Filter size={15} color={C.blue} />
+                <span style={{ fontSize: '.78rem', fontWeight: 700, color: C.muted }}>{spec.selector}:</span>
+                <select value={filterVal} onChange={(e) => setFilterVal(e.target.value)} style={{ ...inpXs, minWidth: 160 }}>
+                  {selVals.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(4, Math.max(1, spec.kpis.length))}, 1fr)`, gap: 10, marginBottom: 16 }}>
+              {spec.kpis.map((k, i) => (
+                <div key={i} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: '12px 13px' }}>
+                  <div style={{ fontSize: '.64rem', fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '.04em' }}>{k.label}</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: C.navy, marginTop: 3 }}>{fmtValue(kpiValue(frows, k), k.format, currency)}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
+              {spec.breakdowns.map((b, i) => {
+                const series = breakdownSeries(frows, b);
+                return (
+                  <div key={i} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12 }}>
+                    <div style={{ fontWeight: 700, color: C.navy, fontSize: '.82rem', marginBottom: 8 }}>{b.title}</div>
+                    {series.length === 0 ? <div style={{ color: C.muted, fontSize: '.8rem' }}>No data.</div>
+                      : b.chart === 'pie' ? <Donut data={series} />
+                      : b.chart === 'line' ? <LineChart data={series} />
+                      : <BarList data={series} />}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      </div>
+      <style>{`@media (max-width: 920px){ .nx-builder-grid{ grid-template-columns: 1fr !important; } }`}</style>
+    </>
+  );
+}
+
+function SrcTab({ active, onClick, Icon, label }) {
+  return (
+    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px', borderRadius: 11, cursor: 'pointer', fontWeight: 700, fontSize: '.88rem', fontFamily: 'inherit',
+      border: `1px solid ${active ? C.navy : C.line}`, background: active ? '#eef4ff' : '#fff', color: active ? C.navy : C.ink }}><Icon size={17} /> {label}</button>
+  );
+}
+const primaryBtnStyle = (busy, small) => ({ display: 'inline-flex', alignItems: 'center', gap: 8, padding: small ? '10px 16px' : '12px 20px', border: 'none', borderRadius: 11, background: '#012158', color: '#fff', fontWeight: 700, fontSize: small ? '.85rem' : '.92rem', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.65 : 1, fontFamily: 'inherit' });
+const ghostBtnStyle = { padding: '8px 14px', border: '1px solid #e5e8ec', borderRadius: 9, background: '#fff', color: '#16233b', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer', fontFamily: 'inherit' };
+const inp2 = { width: '100%', padding: '9px 11px', border: '1px solid #e5e8ec', borderRadius: 9, fontSize: '.86rem', fontFamily: 'inherit', color: '#16233b', marginBottom: 10 };
+const inpXs = { padding: '7px 9px', border: '1px solid #e5e8ec', borderRadius: 8, fontSize: '.8rem', fontFamily: 'inherit', color: '#16233b', background: '#fff' };
+const editRow = { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 };
+const addBtn = { display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px dashed #cfe3fb', background: '#f7fbff', color: '#0b6fd6', borderRadius: 9, padding: '7px 12px', fontSize: '.8rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' };
+const delBtn = { display: 'grid', placeItems: 'center', width: 28, height: 28, border: '1px solid #f6c9cb', background: '#fff', color: '#e5484d', borderRadius: 8, cursor: 'pointer', flexShrink: 0 };
+function Lbl2({ children }) { return <div style={{ fontSize: '.72rem', color: '#8a94a6', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>{children}</div>; }
+
 function Card({ title, children }) { return <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, padding: 16, boxShadow: '0 1px 2px rgba(1,33,88,.05)', marginBottom: 14 }}>{title && <div style={{ fontWeight: 800, color: C.navy, fontSize: '.88rem', marginBottom: 10 }}>{title}</div>}{children}</div>; }
 function ErrBox({ children }) { return <div style={{ background: '#fdecec', border: '1px solid #f6c9cb', color: C.red, padding: '10px 13px', borderRadius: 9, fontSize: '.85rem', marginBottom: 14 }}>{children}</div>; }
 function GuideNote({ children, onClose }) {

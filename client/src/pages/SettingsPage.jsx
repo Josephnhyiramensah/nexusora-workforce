@@ -8,6 +8,7 @@ import { CURRENCIES, currencyName } from '../config/currencies';
 import PicklistsSettings from '../components/PicklistsSettings';
 import ApiKeysSettings from '../components/settings/ApiKeysSettings';
 import WhiteLabelSettings from '../components/settings/WhiteLabelSettings';
+import SecuritySettings from '../components/settings/SecuritySettings';
 import { ModuleShell, Hero, Body } from '../ui/kit';
 
 const C = { navy: '#012158', blue: '#3485E9', gold: '#C9A227', green: '#1f9d57', red: '#e5484d',
@@ -81,7 +82,7 @@ export default function SettingsPage() {
         {tab === 'company' && <CompanyTab setMsg={setMsg} />}
         {tab === 'users' && <UsersTab me={user} setMsg={setMsg} />}
         {tab === 'picklists' && <PicklistsSettings setMsg={setMsg} />}
-        {tab === 'security' && <SecurityTab />}
+        {tab === 'security' && <SecuritySettings setMsg={setMsg} />}
         {tab === 'api' && <ApiKeysSettings setMsg={setMsg} />}
         {tab === 'whitelabel' && <WhiteLabelSettings setMsg={setMsg} />}
       </Body>

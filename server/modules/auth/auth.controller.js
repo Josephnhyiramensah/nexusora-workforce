@@ -1,5 +1,8 @@
 const asyncHandler = require('express-async-handler');
+const jwt = require('jsonwebtoken');
+const env = require('../../config/env');
 const { signToken } = require('../../utils/generateToken');
+const { verifyTotp } = require('../../utils/twoFactor');
 
 function safeUser(u) {
   // `employee` may be a bare id or a populated doc (in listUsers). Always expose the id
@@ -22,6 +25,11 @@ function tenantInfo(t) {
   };
 }
 
+function issueSession(res, user, tenant, extra = {}) {
+  const token = signToken({ userId: user._id, tenant: tenant.subdomain, role: user.role, permissions: user.permissions || [] });
+  res.json({ token, user: safeUser(user), tenant: tenantInfo(tenant), ...extra });
+}
+
 // POST /api/auth/login
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
@@ -30,8 +38,48 @@ const login = asyncHandler(async (req, res) => {
   if (!user || !(await user.matchPassword(password || ''))) {
     return res.status(401).json({ message: 'Invalid credentials' });
   }
-  const token = signToken({ userId: user._id, tenant: req.tenant.subdomain, role: user.role, permissions: user.permissions || [] });
-  res.json({ token, user: safeUser(user), tenant: tenantInfo(req.tenant) });
+  // If the user has 2FA enabled, don't issue a session yet — return a short-lived
+  // challenge and require the second factor via POST /auth/2fa/login.
+  if (user.twoFactorEnabled) {
+    const challengeToken = signToken(
+      { userId: user._id, tenant: req.tenant.subdomain, type: '2fa_pending' },
+      { expiresIn: '10m' },
+    );
+    return res.json({ twoFactorRequired: true, challengeToken });
+  }
+  issueSession(res, user, req.tenant);
+});
+
+// POST /api/auth/2fa/login — step 2 for users with 2FA enabled (PUBLIC, tenant-resolved).
+// Body: { challengeToken, token?, backupCode? }
+const loginVerify = asyncHandler(async (req, res) => {
+  const { challengeToken, token, backupCode } = req.body;
+  if (!challengeToken) return res.status(400).json({ message: 'Login session expired. Please sign in again.' });
+  if (!token && !backupCode) return res.status(400).json({ message: 'Enter an authenticator code or a backup code.' });
+
+  let decoded;
+  try { decoded = jwt.verify(challengeToken, env.JWT_SECRET); }
+  catch (e) {
+    const expired = e.name === 'TokenExpiredError';
+    return res.status(401).json({ message: expired ? 'Login session expired. Please sign in again.' : 'Invalid login session.' });
+  }
+  if (decoded.type !== '2fa_pending') return res.status(401).json({ message: 'Invalid login session.' });
+  if (decoded.tenant && decoded.tenant !== req.tenant.subdomain) {
+    return res.status(401).json({ message: 'Login session is not valid for this workspace.' });
+  }
+
+  const User = req.tenantConn.model('User');
+  const user = await User.findById(decoded.userId).select('+twoFactorSecret +twoFactorBackupCodes');
+  if (!user || !user.isActive) return res.status(401).json({ message: 'Account not available.' });
+  if (!user.twoFactorEnabled) return res.status(400).json({ message: 'Two-factor authentication is not enabled for this account.' });
+
+  let verified = false; let usedBackup = false;
+  if (token) verified = verifyTotp(token, user.twoFactorSecret);
+  if (!verified && backupCode) { verified = await user.verifyAndBurnBackupCode(backupCode); usedBackup = verified; }
+  if (!verified) return res.status(401).json({ message: 'Incorrect code. Please try again.' });
+
+  const backupCodesRemaining = Array.isArray(user.twoFactorBackupCodes) ? user.twoFactorBackupCodes.length : 0;
+  issueSession(res, user, req.tenant, { usedBackupCode: usedBackup, backupCodesRemaining });
 });
 
 // GET /api/auth/me
@@ -141,6 +189,6 @@ const updateProfile = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  login, me, createUser, listUsers, updateUser, setUserStatus,
+  login, loginVerify, me, createUser, listUsers, updateUser, setUserStatus,
   adminResetPassword, changePassword, updateProfile,
 };
