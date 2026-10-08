@@ -17,4 +17,7 @@ router.post('/:id/read', c.markRead);
 router.post('/', authorise('super_admin', 'hr_manager'), c.createNotification);
 router.delete('/:id', authorise('super_admin', 'hr_manager'), c.deleteNotification);
 
+// Run the overdue reminder sweep for this tenant on demand (admin).
+router.post('/run-reminders', authorise('super_admin', 'hr_manager'), c.runReminders);
+
 module.exports = router;

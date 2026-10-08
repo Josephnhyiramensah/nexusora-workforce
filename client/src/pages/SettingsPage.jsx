@@ -7,6 +7,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { CURRENCIES, currencyName } from '../config/currencies';
 import PicklistsSettings from '../components/PicklistsSettings';
 import ApiKeysSettings from '../components/settings/ApiKeysSettings';
+import WhiteLabelSettings from '../components/settings/WhiteLabelSettings';
 import { ModuleShell, Hero, Body } from '../ui/kit';
 
 const C = { navy: '#012158', blue: '#3485E9', gold: '#C9A227', green: '#1f9d57', red: '#e5484d',
@@ -82,8 +83,7 @@ export default function SettingsPage() {
         {tab === 'picklists' && <PicklistsSettings setMsg={setMsg} />}
         {tab === 'security' && <SecurityTab />}
         {tab === 'api' && <ApiKeysSettings setMsg={setMsg} />}
-        {tab === 'whitelabel' && <ProTab title="White-label" isPro={isPro}
-          blurb="Apply your own brand colours and logo across the workspace." />}
+        {tab === 'whitelabel' && <WhiteLabelSettings setMsg={setMsg} />}
       </Body>
       </div>
     </ModuleShell>

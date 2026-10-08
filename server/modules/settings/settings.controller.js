@@ -15,12 +15,20 @@ const updateBranding = asyncHandler(async (req, res) => {
   const master = getMasterConnection();
   if (!master) return res.status(503).json({ message: 'Registry unavailable' });
 
-  const { letterhead, logo, companyName, address, phone, email, website, footerNote } = req.body;
+  const { letterhead, logo, companyName, address, phone, email, website, footerNote, primaryColor, accentColor } = req.body;
 
   // Guard against oversized inline images (data URLs are stored directly).
   for (const [label, val] of [['letterhead', letterhead], ['logo', logo]]) {
     if (typeof val === 'string' && val.length > 1400000) {
       return res.status(413).json({ message: `${label} image is too large — please use an image under ~1MB.` });
+    }
+  }
+
+  // White-label brand colours must be hex (#rgb / #rrggbb). Empty string clears.
+  const isHex = (v) => v === '' || /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(v));
+  for (const [label, val] of [['primaryColor', primaryColor], ['accentColor', accentColor]]) {
+    if (val !== undefined && !isHex(val)) {
+      return res.status(400).json({ message: `${label} must be a hex colour like #0b3f96.` });
     }
   }
 
@@ -34,6 +42,8 @@ const updateBranding = asyncHandler(async (req, res) => {
     ...(email !== undefined ? { email } : {}),
     ...(website !== undefined ? { website } : {}),
     ...(footerNote !== undefined ? { footerNote } : {}),
+    ...(primaryColor !== undefined ? { primaryColor } : {}),
+    ...(accentColor !== undefined ? { accentColor } : {}),
     updatedAt: new Date(),
   };
 

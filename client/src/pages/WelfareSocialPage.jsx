@@ -486,14 +486,19 @@ function SchemeDrawer({ id, canWrite, onBack, setMsg }) {
   useEffect(() => { let a = true; (async () => { try { const { data } = await api.get(`/welfare/schemes/${id}`); if (a) { setS(data); setC1((x) => ({ ...x, amount: x.amount || data.contributionAmount || '' })); } } catch { /* */ } })(); return () => { a = false; }; }, [id, reload]);
   async function add() { if (!c1.employee || !c1.amount) { setErr('Employee and amount are required.'); return; } setBusy(true); setErr(''); try { await api.post(`/welfare/schemes/${id}/contributions`, { ...c1, amount: Number(c1.amount) }); setC1({ employee: '', amount: s?.contributionAmount || '', period: '', method: 'payroll_deduction' }); setMsg('Contribution recorded.'); setReload((n) => n + 1); } catch (e) { setErr(e?.response?.data?.message || 'Failed.'); } finally { setBusy(false); } }
   async function del(cid) { try { await api.delete(`/welfare/schemes/${id}/contributions/${cid}`); setReload((n) => n + 1); } catch { /* */ } }
-  const members = s ? new Set((s.contributions || []).map((x) => String(x.employee?._id || x.employee))).size : 0;
+  // The ledger is an ARRAY; guard in case an older server sends a summary number.
+  const ledger = Array.isArray(s?.contributions) ? s.contributions : [];
+  const totalContributed = typeof s?.totalContributed === 'number'
+    ? s.totalContributed
+    : ledger.reduce((a, c) => a + (c.amount || 0), 0);
+  const members = new Set(ledger.map((x) => String(x.employee?._id || x.employee))).size;
   return (
     <>
       <SubHero onBack={onBack} backLabel="Back to schemes" crumbs={['Schemes & Contributions', s ? s.name : '…']}
         title={s ? s.name : 'Loading…'} statusEl={s && <Pill tone="grey">{label(SCHEME_TYPES, s.type)}</Pill>} meta={s && `${s.frequency ? cap(s.frequency) : ''} contributions`} />
       {s && <KpiBand>
         <Kpi Icon={PiggyBank} iconColor={C.green} iconBg={C.greenBg} label="Fund balance" value={money(s.balance, s.currency)} foot={<span>opening + in − paid</span>} />
-        <Kpi Icon={Wallet} label="Contributions" value={money(s.contributions, s.currency)} foot={<span>all-time</span>} />
+        <Kpi Icon={Wallet} label="Contributions" value={money(totalContributed, s.currency)} foot={<span>all-time</span>} />
         <Kpi Icon={HeartHandshake} iconColor={C.amber} iconBg={C.amberBg} label="Paid out" value={money(s.paidOut, s.currency)} foot={<span>claims from fund</span>} />
         <Kpi Icon={Users} iconColor={C.navy} iconBg={C.greyBg} label="Members" value={members} foot={<span>contributors</span>} />
       </KpiBand>}
@@ -512,10 +517,10 @@ function SchemeDrawer({ id, canWrite, onBack, setMsg }) {
             </Card>
           )}
           <div style={{ marginTop: 18 }}>
-            <Card title="Contributions ledger" sub={`${(s.contributions || []).length} entries`}>
-              {(s.contributions || []).length === 0 ? <Empty>No contributions recorded yet.</Empty> : (
+            <Card title="Contributions ledger" sub={`${ledger.length} entries`}>
+              {ledger.length === 0 ? <Empty>No contributions recorded yet.</Empty> : (
                 <TableWrap head={[['Member'], ['Period'], ['Amount', 'r'], ['Method'], ['Date'], ['', 'r']]}>
-                  {(s.contributions || []).slice().reverse().map((c) => (
+                  {ledger.slice().reverse().map((c) => (
                     <tr key={c._id} style={{ borderTop: `1px solid ${C.lineSoft}` }}>
                       <td style={td}><EmpCell e={c.employee} fallback={c.name} /></td>
                       <td style={{ ...td, ...NUM }}>{c.period || '—'}</td>

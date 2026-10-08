@@ -5,6 +5,7 @@ import { LocaleProvider } from './context/LocaleContext';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import App from './App.jsx';
+import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 
 createRoot(document.getElementById('root')).render(
@@ -13,7 +14,9 @@ createRoot(document.getElementById('root')).render(
       <LocaleProvider>
         <AuthProvider>
           <ToastProvider>
-            <App />
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
           </ToastProvider>
         </AuthProvider>
       </LocaleProvider>

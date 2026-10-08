@@ -203,7 +203,10 @@ const getScheme = asyncHandler(async (req, res) => {
   const doc = await WelfareScheme.findById(req.params.id).populate('contributions.employee', 'firstName lastName staffId').lean();
   if (!doc) return res.status(404).json({ message: 'Scheme not found' });
   const b = await schemeBalance(req, doc);
-  res.json({ ...doc, ...b });
+  // IMPORTANT: keep doc.contributions as the populated LEDGER ARRAY. schemeBalance
+  // returns `contributions` as a summed NUMBER, so expose that as totalContributed
+  // instead of spreading `...b` (which would clobber the array and crash the UI).
+  res.json({ ...doc, balance: b.balance, paidOut: b.paidOut, totalContributed: b.contributions });
 });
 
 const createScheme = asyncHandler(async (req, res) => {

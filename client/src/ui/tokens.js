@@ -49,7 +49,7 @@ export const tone = (t) => (PILL[(t || [])[1]] || PILL.grey)[0];
 /* --------------------------- STYLE OBJECTS ------------------------ */
 export const inp = { width: '100%', padding: '9px 11px', border: '1px solid #d8e0ec', borderRadius: 9, fontSize: '.9rem', color: C.ink, background: '#fff', fontFamily: FONT };
 export const ta = { ...inp, resize: 'vertical', marginBottom: 12 };
-export const primaryBtn = { padding: '10px 18px', border: 'none', borderRadius: 10, background: C.navy, color: '#fff', fontWeight: 700, cursor: 'pointer', fontFamily: FONT };
+export const primaryBtn = { padding: '10px 18px', border: 'none', borderRadius: 10, background: 'var(--nx-brand, #012158)', color: '#fff', fontWeight: 700, cursor: 'pointer', fontFamily: FONT };
 export const ghostBtn = { padding: '10px 18px', border: '1px solid #d8e0ec', borderRadius: 10, background: '#fff', color: C.ink, fontWeight: 600, cursor: 'pointer', fontFamily: FONT };
 export const rowStyle = { cursor: 'pointer', borderTop: `1px solid ${C.lineSoft}` };
 export const td = { padding: '13px 20px', fontSize: '.85rem', color: C.ink, verticalAlign: 'middle' };

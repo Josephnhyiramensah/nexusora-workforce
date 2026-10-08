@@ -3,6 +3,7 @@
 // current identity via req.auth (userId, role). The bell is an INBOX — it lists
 // only UNREAD items; once read, an item leaves the bell.
 const asyncHandler = require('express-async-handler');
+const { runForTenant } = require('../reminders/reminders.service');
 
 const VALID_TYPES = ['info', 'success', 'warning', 'danger'];
 const VALID_ROLES = ['super_admin', 'hr_manager', 'hr_officer', 'line_manager', 'payroll_officer', 'ir_officer', 'employee', 'viewer'];
@@ -145,7 +146,14 @@ const deleteNotification = asyncHandler(async (req, res) => {
   res.json({ success: true });
 });
 
+// POST /notifications/run-reminders — run the overdue sweep for THIS tenant now
+// (admin). Handy for testing and for an on-demand refresh of alerts.
+const runReminders = asyncHandler(async (req, res) => {
+  const result = await runForTenant(req.tenantConn, { tenantName: req.tenant?.name || req.tenant?.subdomain });
+  res.json({ success: true, data: result });
+});
+
 module.exports = {
   getNotifications, getUnreadCount, createNotification,
-  markRead, markAllRead, deleteNotification,
+  markRead, markAllRead, deleteNotification, runReminders,
 };

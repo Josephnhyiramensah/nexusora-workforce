@@ -15,6 +15,7 @@ import {
   ShieldCheck, TrendingUp, GraduationCap, Network, HeartHandshake, Scale, Sparkles, IdCard,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
+import ErrorBoundary from './ErrorBoundary';
 
 /* All modules, grouped — powers the launcher grid */
 const MODULES = [
@@ -62,7 +63,8 @@ const PRIMARY = [
 export default function AppShell({ children }) {
   const loc = useLocation();
   const nav = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, tenant, logout } = useAuth();
+  const brandLogo = tenant?.branding?.logo || '';
   const { t } = useLocale();
   const [launcher, setLauncher] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -79,7 +81,9 @@ export default function AppShell({ children }) {
       {/* ---------- TOP BAR ---------- */}
       <header style={{ position: 'sticky', top: 0, zIndex: 50, height: 58, background: '#fff', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 20, padding: '0 22px', boxShadow: '0 1px 0 rgba(1,33,88,.03)' }}>
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 11, textDecoration: 'none', minWidth: 200 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 9, flex: 'none', background: 'linear-gradient(135deg,#012158,#0b3f96)', display: 'grid', placeItems: 'center' }}><HeartHandshake size={19} color="#fff" /></div>
+          {brandLogo
+            ? <div style={{ width: 34, height: 34, borderRadius: 9, flex: 'none', overflow: 'hidden', border: `1px solid ${C.line}`, background: '#fff', display: 'grid', placeItems: 'center' }}><img src={brandLogo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /></div>
+            : <div style={{ width: 34, height: 34, borderRadius: 9, flex: 'none', background: 'linear-gradient(135deg,var(--nx-brand,#012158),var(--nx-brand-2,#0b3f96))', display: 'grid', placeItems: 'center' }}><HeartHandshake size={19} color="#fff" /></div>}
           <div className="nx-brand-text">
             <div style={{ fontWeight: 800, color: C.navy, fontSize: '.95rem', letterSpacing: '-.01em', lineHeight: 1.05 }}>Nexusora Workforce</div>
             <div style={{ fontSize: '.62rem', color: C.muted2, fontWeight: 700, letterSpacing: '.04em' }}>People · Performance · Progress</div>
@@ -138,7 +142,7 @@ export default function AppShell({ children }) {
       )}
 
       {/* ---------- PAGE ---------- */}
-      {children}
+      <ErrorBoundary key={loc.pathname}>{children}</ErrorBoundary>
     </div>
   );
 }

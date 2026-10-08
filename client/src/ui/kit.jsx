@@ -17,6 +17,9 @@ export function GlobalStyles() {
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
       *{box-sizing:border-box}
+      /* White-label brand tokens. Defaults match the stock palette; the
+         BrandStyle component overrides these from the tenant's branding. */
+      :root{--nx-brand:${C.navy};--nx-brand-2:#0b3f96;--nx-accent:${C.accent};}
       body{margin:0;font-family:${FONT};color:${C.ink};background:${C.ground}}
       .nx-scroll::-webkit-scrollbar{width:10px;height:10px}
       .nx-scroll::-webkit-scrollbar-thumb{background:#d3dbe6;border-radius:8px;border:2px solid #fff}

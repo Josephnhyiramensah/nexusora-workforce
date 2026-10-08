@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { CurrencyProvider } from './context/CurrencyContext';
+import BrandStyle from './context/BrandStyle';
 import AppShell from './components/AppShell';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
@@ -29,6 +30,7 @@ import WelfareSocialPage from './pages/WelfareSocialPage';
 export default function App() {
   return (
     <CurrencyProvider>
+      <BrandStyle />
       <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/" element={<ProtectedRoute><HomeScreen /></ProtectedRoute>} />
