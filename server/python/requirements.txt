@@ -1,5 +1,11 @@
 # Nexusora Workforce — AI analytics engine (Python worker).
 # Install on the server:  pip3 install -r server/python/requirements.txt
+#
+# IMPORTANT: install into the SAME interpreter Node spawns. Node uses
+# process.env.PYTHON_BIN (falls back to "python3"). If the download throws
+# "No module named 'xlsxwriter'", that interpreter is missing these deps —
+# run:  "$PYTHON_BIN" -m pip install -r server/python/requirements.txt
 pandas>=2.0
+numpy>=1.24
 XlsxWriter>=3.1
 openpyxl>=3.1

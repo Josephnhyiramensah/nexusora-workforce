@@ -505,7 +505,7 @@ function ExcelStudio() {
           <Card title="KPIs">
             {spec.kpis.map((k, i) => (
               <div key={i} style={editRow}>
-                <input value={k.label} onChange={(e) => updKpi(i, { label: e.target.value })} placeholder="Label" style={{ ...inpXs, flex: '1 1 120px' }} />
+                <input value={k.label} onChange={(e) => updKpi(i, { label: e.target.value })} placeholder="Label" style={{ ...inpXs, flex: '1 1 100%' }} />
                 <select value={k.agg} onChange={(e) => updKpi(i, { agg: e.target.value })} style={inpXs}>{AGG_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
                 {k.agg !== 'count' && (
                   <select value={k.field || ''} onChange={(e) => updKpi(i, { field: e.target.value })} style={inpXs}>
@@ -625,8 +625,8 @@ function SrcTab({ active, onClick, Icon, label }) {
 const primaryBtnStyle = (busy, small) => ({ display: 'inline-flex', alignItems: 'center', gap: 8, padding: small ? '10px 16px' : '12px 20px', border: 'none', borderRadius: 11, background: '#012158', color: '#fff', fontWeight: 700, fontSize: small ? '.85rem' : '.92rem', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.65 : 1, fontFamily: 'inherit' });
 const ghostBtnStyle = { padding: '8px 14px', border: '1px solid #e5e8ec', borderRadius: 9, background: '#fff', color: '#16233b', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer', fontFamily: 'inherit' };
 const inp2 = { width: '100%', padding: '9px 11px', border: '1px solid #e5e8ec', borderRadius: 9, fontSize: '.86rem', fontFamily: 'inherit', color: '#16233b', marginBottom: 10 };
-const inpXs = { padding: '7px 9px', border: '1px solid #e5e8ec', borderRadius: 8, fontSize: '.8rem', fontFamily: 'inherit', color: '#16233b', background: '#fff' };
-const editRow = { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 };
+const inpXs = { padding: '7px 9px', border: '1px solid #e5e8ec', borderRadius: 8, fontSize: '.8rem', fontFamily: 'inherit', color: '#16233b', background: '#fff', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' };
+const editRow = { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 8 };
 const addBtn = { display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px dashed #cfe3fb', background: '#f7fbff', color: '#0b6fd6', borderRadius: 9, padding: '7px 12px', fontSize: '.8rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' };
 const delBtn = { display: 'grid', placeItems: 'center', width: 28, height: 28, border: '1px solid #f6c9cb', background: '#fff', color: '#e5484d', borderRadius: 8, cursor: 'pointer', flexShrink: 0 };
 function Lbl2({ children }) { return <div style={{ fontSize: '.72rem', color: '#8a94a6', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>{children}</div>; }

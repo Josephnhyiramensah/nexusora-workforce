@@ -18,6 +18,24 @@ const AGGS = ['count', 'sum', 'mean', 'ratio', 'distinct'];
 const CHARTS = ['column', 'bar', 'pie', 'line'];
 const FORMATS = ['int', 'float', 'money', 'pct'];
 
+// Turn a raw Python failure into a clean, actionable message instead of dumping
+// a multi-line traceback into the UI. A missing dependency is the common one
+// (the server's Python hasn't had requirements.txt installed).
+function friendlyPyError(stderr, code) {
+  const raw = String(stderr || '').trim();
+  const miss = raw.match(/ModuleNotFoundError: No module named ['"]([^'"]+)['"]/);
+  if (miss) {
+    return `The analytics engine is missing a Python dependency ("${miss[1]}"). On the server, install the engine's requirements into the interpreter Node runs (PYTHON_BIN, currently "${PYTHON}"):  "${PYTHON}" -m pip install -r server/python/requirements.txt`;
+  }
+  if (/No such file or directory|ENOENT|not found/i.test(raw) && /python/i.test(raw)) {
+    return `Python 3 was not found on the server. Install Python 3 and its dependencies, or set PYTHON_BIN to the correct interpreter (currently "${PYTHON}").`;
+  }
+  // Fall back to the last meaningful line of the traceback, not the whole dump.
+  const lastLine = raw.split('\n').map((l) => l.trim()).filter(Boolean).pop();
+  if (lastLine) return `The analytics engine failed: ${lastLine}`;
+  return `The analytics engine exited with code ${code}.`;
+}
+
 /* ----------------------------- data shaping ----------------------------- */
 const yrs = (d) => { if (!d) return null; const y = (Date.now() - new Date(d)) / (365.25 * 864e5); return y >= 0 ? +y.toFixed(1) : null; };
 const hireOf = (e) => e?.employment?.hireDate || e?.hireDate || e?.employment?.dateEmployed || e?.employment?.startDate || null;
@@ -173,7 +191,7 @@ function generate({ rows, spec }) {
     proc.stderr.on('data', (d) => { stderr += d; });
     proc.on('error', (e) => {
       if (done) return; done = true; clearTimeout(timer); rmrf(tmp);
-      reject(new Error(`Could not run the Python engine (${PYTHON}). Is Python 3 + requirements.txt installed on the server? ${e.message}`));
+      reject(new Error(`Could not start the analytics engine with "${PYTHON}". Install Python 3 and its requirements, or set PYTHON_BIN. (${e.message})`));
     });
     proc.on('close', (code) => {
       if (done) return; done = true; clearTimeout(timer);
@@ -181,7 +199,7 @@ function generate({ rows, spec }) {
       try { summary = JSON.parse(stdout || '{}'); } catch { /* keep {} */ }
       if (code !== 0 || !summary.ok) {
         rmrf(tmp);
-        return reject(new Error(summary.error || stderr.trim() || `Engine exited with code ${code}.`));
+        return reject(new Error(summary.error || friendlyPyError(stderr, code)));
       }
       let buffer;
       try { buffer = fs.readFileSync(outPath); } catch (e) { rmrf(tmp); return reject(new Error('Engine produced no file: ' + e.message)); }
