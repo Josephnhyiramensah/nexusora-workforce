@@ -134,10 +134,26 @@ function stripFences(text) {
   return t.slice(0, MAX_CODE_CHARS);
 }
 
+// Compact transcript of earlier steps so a follow-up can build on them. The df
+// is the SAME dataset each time (the sandbox is stateless), so prior code is
+// context, not state — Claude re-derives what it needs.
+function priorContext(history) {
+  const steps = (Array.isArray(history) ? history : []).slice(-4);
+  if (!steps.length) return '';
+  const parts = steps.map((s, i) => [
+    `Step ${i + 1} — Question: ${String(s.question || '').slice(0, 300)}`,
+    s.code ? `Code:\n${String(s.code).slice(0, 1500)}` : '',
+    s.result != null ? `Result: ${JSON.stringify(s.result).slice(0, 1200)}` : '',
+  ].filter(Boolean).join('\n'));
+  return `\n\nEARLIER STEPS in this analysis (same df each time — use as context, re-derive what you need):\n${parts.join('\n\n')}`;
+}
+
 /* --------------------------------- main ----------------------------------- */
 // Ask Claude to answer `question` by writing + running analysis code on `rows`.
+// `dataset`/`datasetLabel` name the data source; `history` carries earlier steps
+// for conversational follow-ups.
 // Returns { ok, question, code, result, charts, stdout, narrative, error }.
-async function analyse({ question, rows }) {
+async function analyse({ question, rows, dataset, datasetLabel, history }) {
   if (!ai.isConfigured()) {
     const err = new Error('Workforce Intelligence AI is not configured on this server.');
     err.status = 503;
@@ -150,11 +166,13 @@ async function analyse({ question, rows }) {
   if (!data.length) { const e = new Error('No data available to analyse.'); e.status = 400; throw e; }
 
   const cols = profile(data);
+  const label = datasetLabel || dataset || 'Employees';
+  const prior = priorContext(history);
   const ask = (extra) => ai.complete({
     system: CODER_SYSTEM,
     messages: [{
       role: 'user',
-      content: `Columns (schema only):\n${JSON.stringify(cols, null, 0)}\n\nTotal rows: ${data.length}\n\nQuestion: ${q}${extra || ''}\n\nWrite the analysis code now.`,
+      content: `Dataset: ${label}\nColumns (schema only):\n${JSON.stringify(cols, null, 0)}\n\nTotal rows: ${data.length}${prior}\n\nQuestion: ${q}${extra || ''}\n\nWrite the analysis code now.`,
     }],
     maxTokens: 1600,
     temperature: 0,
@@ -187,6 +205,9 @@ async function analyse({ question, rows }) {
   return {
     ok: !!(run && run.ok),
     question: q,
+    dataset: dataset || 'employees',
+    datasetLabel: label,
+    rowsAnalyzed: data.length,
     code,
     result: (run && run.result) || {},
     charts: (run && run.charts) || [],

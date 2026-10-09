@@ -5,6 +5,7 @@ const { METRICS, metricCatalogue, computeMetric, contextPack, loadEmployees } = 
 const { identityPrompt, COMPANY } = require('../../config/company');
 const xlsxDash = require('../../services/excelDashboard.service');
 const dataScientist = require('../../services/dataScientist.service');
+const datasets = require('../../services/datasets.service');
 
 /* ============================ STATUS ============================ */
 // GET /ai/status — lets the UI show a clear "not configured" state instead of failing.
@@ -315,17 +316,66 @@ const analyzeNarrative = asyncHandler(async (req, res) => {
 /* ===================== DATA SCIENTIST (sandboxed) ===================== */
 // Claude writes Python analysis code; it runs in the locked sandbox against the
 // real rows. Numbers are computed, never invented. AI-only (503 when off).
+
+// Caps for what we persist to the audit record (keep documents bounded).
+const HIST_RESULT_CHARS = 20000;
+const HIST_CHARTS = 6;
+
+function capResult(result) {
+  try {
+    const s = JSON.stringify(result ?? {});
+    if (s.length <= HIST_RESULT_CHARS) return result;
+    return { _truncated: true, preview: s.slice(0, HIST_RESULT_CHARS) };
+  } catch { return {}; }
+}
+
+// Persist an analysis as an audit record. Best-effort — never fails the request.
+async function saveAnalysis(req, out, { source, parent }) {
+  try {
+    const doc = await req.tenantConn.model('DataAnalysis').create({
+      question: out.question,
+      dataset: out.dataset || 'employees',
+      datasetLabel: out.datasetLabel || '',
+      source: source || 'system',
+      code: String(out.code || '').slice(0, 24000),
+      narrative: String(out.narrative || '').slice(0, 8000),
+      result: capResult(out.result),
+      charts: (out.charts || []).slice(0, HIST_CHARTS),
+      stdout: String(out.stdout || '').slice(0, 4000),
+      rowsAnalyzed: out.rowsAnalyzed || 0,
+      ok: !!out.ok,
+      blocked: !!out.blocked,
+      error: out.error || '',
+      parent: parent || null,
+      step: parent ? 2 : 1,
+      author: { userId: req.auth?.userId, name: req.auth?.name || '' },
+    });
+    return String(doc._id);
+  } catch { return null; }
+}
+
+// GET /ai/data-science/datasets — the picker catalogue for the UI.
+const dataScienceDatasets = asyncHandler(async (req, res) => {
+  res.json({ datasets: datasets.CATALOGUE });
+});
+
 const dataScience = asyncHandler(async (req, res) => {
   if (!ai.isConfigured()) return res.status(503).json({ message: 'Workforce Intelligence AI is not configured on the server.' });
-  const { question, source } = req.body || {};
+  const { question, source, dataset, history, parent } = req.body || {};
+  const key = datasets.KEYS.includes(dataset) ? dataset : 'employees';
+
   let rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  let datasetLabel = 'Uploaded data';
   if (!rows.length || source === 'system') {
-    rows = xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn));
+    rows = await datasets.buildDataset(req.tenantConn, key);
+    datasetLabel = datasets.labelFor(key);
   }
-  if (!rows.length) return res.status(422).json({ message: 'No employee data to analyse yet.' });
+  if (!rows.length) return res.status(422).json({ message: `No ${datasets.labelFor(key).toLowerCase()} data to analyse yet.` });
+
   try {
-    const out = await dataScientist.analyse({ question, rows });
-    return res.json(out);
+    const out = await dataScientist.analyse({ question, rows, dataset: key, datasetLabel, history });
+    const id = await saveAnalysis(req, out, { source: 'system', parent });
+    return res.json({ ...out, id });
   } catch (e) {
     return res.status(e.status || 500).json({ message: e.message || 'Analysis failed.' });
   }
@@ -337,17 +387,130 @@ const dataScienceUpload = asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Upload a CSV or Excel file (field "file").' });
   const { headers, rows } = await parseUpload(req.file);
   if (!headers.length || !rows.length) return res.status(422).json({ message: 'Could not read any rows from that file.' });
+  let history;
+  try { history = req.body?.history ? JSON.parse(req.body.history) : undefined; } catch { history = undefined; }
   try {
-    const out = await dataScientist.analyse({ question: req.body?.question, rows });
-    return res.json(out);
+    const out = await dataScientist.analyse({ question: req.body?.question, rows, dataset: 'upload', datasetLabel: req.file.originalname || 'Uploaded file', history });
+    const id = await saveAnalysis(req, out, { source: 'upload', parent: req.body?.parent });
+    return res.json({ ...out, id });
   } catch (e) {
     return res.status(e.status || 500).json({ message: e.message || 'Analysis failed.' });
   }
+});
+
+/* ---- history (audit) ---- */
+const dataScienceHistory = asyncHandler(async (req, res) => {
+  const list = await req.tenantConn.model('DataAnalysis').find({})
+    .sort({ createdAt: -1 }).limit(60)
+    .select('question dataset datasetLabel ok blocked rowsAnalyzed step parent author createdAt')
+    .lean();
+  res.json({ history: list });
+});
+
+const dataScienceGet = asyncHandler(async (req, res) => {
+  const doc = await req.tenantConn.model('DataAnalysis').findById(req.params.id).lean();
+  if (!doc) return res.status(404).json({ message: 'Analysis not found.' });
+  res.json(doc);
+});
+
+const dataScienceDelete = asyncHandler(async (req, res) => {
+  await req.tenantConn.model('DataAnalysis').deleteOne({ _id: req.params.id });
+  res.json({ ok: true });
+});
+
+/* ---- export a saved (or supplied) analysis to .xlsx ---- */
+async function buildAnalysisWorkbook(a) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = COMPANY.uiName || 'Nexusora Workforce';
+  wb.created = new Date();
+  const navy = 'FF012158';
+  const head = (ws) => { ws.views = [{ showGridLines: false }]; };
+  // Excel sheet names must be unique, <=31 chars, and free of \ / ? * [ ] :
+  const usedNames = new Set();
+  const sheet = (desired) => {
+    let base = String(desired || 'Sheet').replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 28) || 'Sheet';
+    let name = base; let n = 2;
+    while (usedNames.has(name.toLowerCase())) { name = `${base.slice(0, 25)} ${n}`; n += 1; }
+    usedNames.add(name.toLowerCase());
+    return wb.addWorksheet(name);
+  };
+
+  // Summary sheet: question, dataset, narrative.
+  const s = sheet('Analysis');
+  head(s);
+  s.getColumn(1).width = 22; s.getColumn(2).width = 90;
+  s.addRow(['Workforce Intelligence — Data Scientist']).font = { bold: true, size: 14, color: { argb: navy } };
+  s.addRow([]);
+  const kv = (k, v) => { const r = s.addRow([k, v]); r.getCell(1).font = { bold: true, color: { argb: navy } }; r.getCell(2).alignment = { wrapText: true, vertical: 'top' }; return r; };
+  kv('Question', a.question || '');
+  kv('Dataset', a.datasetLabel || a.dataset || '');
+  kv('Rows analysed', String(a.rowsAnalyzed || 0));
+  kv('When', new Date(a.createdAt || Date.now()).toISOString().slice(0, 16).replace('T', ' '));
+  s.addRow([]);
+  if (a.narrative) { const r = s.addRow(['Interpretation', a.narrative]); r.getCell(1).font = { bold: true, color: { argb: navy } }; r.getCell(2).alignment = { wrapText: true, vertical: 'top' }; }
+
+  // Result sheets: one per complex value; scalars collected on a "Metrics" sheet.
+  const result = a.result && !a.result._truncated ? a.result : {};
+  const entries = Object.entries(result || {});
+  const scalars = entries.filter(([, v]) => v == null || typeof v !== 'object');
+  if (scalars.length) {
+    const m = sheet('Metrics'); head(m);
+    m.getColumn(1).width = 36; m.getColumn(2).width = 24;
+    const hr = m.addRow(['Metric', 'Value']); hr.font = { bold: true, color: { argb: 'FFFFFFFF' } }; hr.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: navy } }; });
+    scalars.forEach(([k, v]) => m.addRow([k, v]));
+  }
+  let idx = 0;
+  for (const [k, v] of entries.filter(([, v]) => v && typeof v === 'object')) {
+    idx += 1;
+    const name = String(k).slice(0, 26).replace(/[\\/?*[\]:]/g, ' ') || `Table ${idx}`;
+    const ws = sheet(name); head(ws);
+    const rows = Array.isArray(v) ? v : [v];
+    const objRows = rows.filter((r) => r && typeof r === 'object' && !Array.isArray(r));
+    if (objRows.length) {
+      const cols = Array.from(objRows.reduce((set, r) => { Object.keys(r).forEach((c) => set.add(c)); return set; }, new Set()));
+      const hr = ws.addRow(cols); hr.font = { bold: true, color: { argb: 'FFFFFFFF' } }; hr.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: navy } }; });
+      objRows.slice(0, 1000).forEach((r) => ws.addRow(cols.map((c) => (r[c] == null || typeof r[c] === 'object') ? JSON.stringify(r[c] ?? '') : r[c])));
+      cols.forEach((_, i) => { ws.getColumn(i + 1).width = 20; });
+    } else if (!Array.isArray(v)) {
+      ws.getColumn(1).width = 36; ws.getColumn(2).width = 40;
+      const hr = ws.addRow(['Key', 'Value']); hr.font = { bold: true, color: { argb: 'FFFFFFFF' } }; hr.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: navy } }; });
+      Object.entries(v).forEach(([kk, vv]) => ws.addRow([kk, (vv == null || typeof vv === 'object') ? JSON.stringify(vv ?? '') : vv]));
+    } else {
+      ws.addRow([k]); v.slice(0, 1000).forEach((x) => ws.addRow([typeof x === 'object' ? JSON.stringify(x) : x]));
+    }
+  }
+
+  // Charts as images on their own sheet.
+  const charts = (a.charts || []).filter(Boolean).slice(0, HIST_CHARTS);
+  if (charts.length) {
+    const cs = sheet('Charts'); head(cs);
+    let row = 1;
+    charts.forEach((b64) => {
+      try {
+        const imgId = wb.addImage({ base64: `data:image/png;base64,${b64}`, extension: 'png' });
+        cs.addImage(imgId, { tl: { col: 0, row: row - 1 }, ext: { width: 560, height: 360 } });
+        row += 20;
+      } catch { /* skip bad image */ }
+    });
+  }
+  return wb.xlsx.writeBuffer();
+}
+
+const dataScienceExport = asyncHandler(async (req, res) => {
+  let a = req.body && req.body.analysis;
+  if (req.params.id) {
+    a = await req.tenantConn.model('DataAnalysis').findById(req.params.id).lean();
+    if (!a) return res.status(404).json({ message: 'Analysis not found.' });
+  }
+  if (!a || !a.question) return res.status(400).json({ message: 'No analysis to export.' });
+  const buffer = await buildAnalysisWorkbook(a);
+  streamWorkbook(res, buffer, `analysis-${(a.question || 'result').slice(0, 24).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`);
 });
 
 module.exports = {
   status, insights, chat, buildDashboard, analyzeUpload,
   excelFromSystem, excelFromUpload,
   datasetSystem, datasetUpload, specSuggest, excelBuild, analyzeNarrative,
-  dataScience, dataScienceUpload,
+  dataScience, dataScienceUpload, dataScienceDatasets,
+  dataScienceHistory, dataScienceGet, dataScienceDelete, dataScienceExport,
 };

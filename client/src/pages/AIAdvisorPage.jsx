@@ -194,102 +194,227 @@ const DS_SUGGEST = [
 ];
 
 function DataScientist() {
-  const [question, setQuestion] = useState('');
+  const [catalogue, setCatalogue] = useState([{ key: 'employees', label: 'Employees' }]);
+  const [dataset, setDataset] = useState('employees');
   const [source, setSource] = useState('system'); // 'system' | 'upload'
   const [file, setFile] = useState(null);
+  const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
-  const [out, setOut] = useState(null);
+  const [thread, setThread] = useState([]);       // array of completed step results
   const [err, setErr] = useState('');
-  const [showCode, setShowCode] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
+  const [history, setHistory] = useState(null);
+  const bottom = useRef(null);
+
+  useEffect(() => { let a = true; (async () => { try { const { data } = await api.get('/ai/data-science/datasets'); if (a && data?.datasets?.length) setCatalogue(data.datasets); } catch { /* keep default */ } })(); return () => { a = false; }; }, []);
+  useEffect(() => { if (thread.length && bottom.current) bottom.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [thread.length, busy]);
+
+  const started = thread.length > 0;
 
   async function run() {
     const q = question.trim();
     if (!q || busy) return;
     if (source === 'upload' && !file) { setErr('Choose a CSV or Excel file to analyse.'); return; }
-    setBusy(true); setErr(''); setOut(null); setShowCode(false);
+    setBusy(true); setErr('');
+    const hist = thread.filter((s) => s.ok).map((s) => ({ question: s.question, code: s.code, result: s.result }));
+    const parent = thread.length ? thread[thread.length - 1].id : undefined;
     try {
       let data;
       if (source === 'upload') {
         const fd = new FormData();
-        fd.append('file', file);
-        fd.append('question', q);
+        fd.append('file', file); fd.append('question', q);
+        if (hist.length) fd.append('history', JSON.stringify(hist));
+        if (parent) fd.append('parent', parent);
         ({ data } = await api.post('/ai/data-science/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } }));
       } else {
-        ({ data } = await api.post('/ai/data-science', { question: q, source: 'system' }));
+        ({ data } = await api.post('/ai/data-science', { question: q, source: 'system', dataset, history: hist, parent }));
       }
-      setOut(data);
+      setThread((t) => [...t, data]);
+      setQuestion('');
       if (!data.ok && data.error) setErr(data.error);
     } catch (e) {
       setErr(e?.response?.data?.message || 'The analysis could not be completed.');
     } finally { setBusy(false); }
   }
 
-  const result = out?.result || {};
-  const hasResult = result && Object.keys(result).length > 0;
+  function reset() { setThread([]); setQuestion(''); setErr(''); }
+
+  async function openHistory() {
+    setHistOpen(true);
+    try { const { data } = await api.get('/ai/data-science/history'); setHistory(data.history || []); }
+    catch { setHistory([]); }
+  }
+  async function loadSaved(id) {
+    try { const { data } = await api.get(`/ai/data-science/${id}`); setThread([{ ...data, id: String(data._id) }]); setHistOpen(false); }
+    catch (e) { setErr(await errMsg(e)); }
+  }
+  async function removeSaved(id) {
+    try { await api.delete(`/ai/data-science/${id}`); setHistory((h) => (h || []).filter((x) => String(x._id) !== String(id))); }
+    catch { /* ignore */ }
+  }
+
+  const activeLabel = catalogue.find((c) => c.key === dataset)?.label || 'Employees';
 
   return (
     <div>
-      <PageHead title="Data Scientist" subtitle="" />
-      <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, padding: 16, marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <SrcTab active={source === 'system'} onClick={() => setSource('system')} Icon={Database} label="Company data" />
-          <SrcTab active={source === 'upload'} onClick={() => setSource('upload')} Icon={Upload} label="Upload a file" />
+      <PageHead title="Data Scientist" subtitle="" action={
+        <div style={{ display: 'flex', gap: 8 }}>
+          {started && <button onClick={reset} style={ghostHeadBtn}><Plus size={15} /> New analysis</button>}
+          <button onClick={openHistory} style={ghostHeadBtn}><Database size={15} /> History</button>
         </div>
-        {source === 'upload' && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: `1px dashed #c6d2e4`, borderRadius: 10, marginBottom: 12, cursor: 'pointer', color: C.ink, fontSize: '.85rem' }}>
-            <Upload size={15} color={C.blue} />
-            <span>{file ? file.name : 'Choose CSV or Excel'}</span>
-            <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] || null)} style={{ display: 'none' }} />
-          </label>
+      } />
+
+      {/* Composer */}
+      <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, padding: 16, marginBottom: 16 }}>
+        {!started && (
+          <>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <SrcTab active={source === 'system'} onClick={() => setSource('system')} Icon={Database} label="Company data" />
+              <SrcTab active={source === 'upload'} onClick={() => setSource('upload')} Icon={Upload} label="Upload a file" />
+            </div>
+            {source === 'system' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '.76rem', fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '.04em' }}>Dataset</span>
+                <select value={dataset} onChange={(e) => setDataset(e.target.value)} style={{ padding: '8px 12px', border: `1px solid #d8e0ec`, borderRadius: 10, fontSize: '.85rem', color: C.ink, background: '#fff', fontFamily: 'inherit', cursor: 'pointer' }}>
+                  {catalogue.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                </select>
+              </div>
+            )}
+            {source === 'upload' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: `1px dashed #c6d2e4`, borderRadius: 10, marginBottom: 12, cursor: 'pointer', color: C.ink, fontSize: '.85rem' }}>
+                <Upload size={15} color={C.blue} />
+                <span>{file ? file.name : 'Choose CSV or Excel'}</span>
+                <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] || null)} style={{ display: 'none' }} />
+              </label>
+            )}
+          </>
+        )}
+        {started && (
+          <div style={{ fontSize: '.78rem', color: C.muted, marginBottom: 10 }}>Follow-up on <strong style={{ color: C.navy }}>{thread[0]?.datasetLabel || activeLabel}</strong> — builds on the analysis above.</div>
         )}
         <textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run(); }}
           rows={2}
-          placeholder="Ask an analytical question about your workforce…"
+          placeholder={started ? 'Ask a follow-up… e.g. “now break that down by grade”' : 'Ask an analytical question about your workforce…'}
           style={{ width: '100%', boxSizing: 'border-box', padding: '12px 14px', border: `1px solid #d8e0ec`, borderRadius: 12, fontSize: '.9rem', color: C.ink, resize: 'vertical', fontFamily: 'inherit' }}
         />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {DS_SUGGEST.map((s) => <button key={s} onClick={() => setQuestion(s)} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 999, padding: '6px 11px', fontSize: '.76rem', color: C.navy, cursor: 'pointer' }}>{s}</button>)}
+            {!started && DS_SUGGEST.map((s) => <button key={s} onClick={() => setQuestion(s)} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 999, padding: '6px 11px', fontSize: '.76rem', color: C.navy, cursor: 'pointer' }}>{s}</button>)}
           </div>
           <button onClick={run} disabled={busy || !question.trim()} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '10px 18px', border: 'none', borderRadius: 12, background: C.navy, color: '#fff', fontWeight: 700, fontSize: '.85rem', cursor: 'pointer', opacity: busy || !question.trim() ? 0.6 : 1 }}>
-            <FlaskConical size={16} /> {busy ? 'Analysing…' : 'Analyse'}
+            {started ? <Send size={16} /> : <FlaskConical size={16} />} {busy ? 'Analysing…' : started ? 'Ask follow-up' : 'Analyse'}
           </button>
         </div>
       </div>
 
       {err && <ErrBox>{err}</ErrBox>}
-      {busy && <div style={{ color: C.muted, padding: '18px 2px', fontSize: '.88rem' }}>Writing and running the analysis on your data…</div>}
 
-      {out && out.ok && (
-        <div>
-          {out.narrative && (
-            <div style={{ background: 'linear-gradient(135deg,#012158,#0c2f6b)', color: '#fff', borderRadius: 14, padding: 20, marginBottom: 16, whiteSpace: 'pre-wrap', fontSize: '.9rem', lineHeight: 1.65 }}>{out.narrative}</div>
+      {/* Thread of steps */}
+      {thread.map((step, i) => <StepCard key={step.id || i} step={step} index={i} total={thread.length} />)}
+      {busy && <div style={{ color: C.muted, padding: '18px 2px', fontSize: '.88rem' }}>Writing and running the analysis on your data…</div>}
+      <div ref={bottom} />
+
+      {histOpen && <HistoryDrawer history={history} onClose={() => setHistOpen(false)} onOpen={loadSaved} onDelete={removeSaved} />}
+    </div>
+  );
+}
+
+const ghostHeadBtn = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', border: `1px solid rgba(255,255,255,.9)`, borderRadius: 10, background: 'rgba(255,255,255,.72)', color: C.navy, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' };
+
+// One analysis step in the thread — narrative, result, charts, code, export.
+function StepCard({ step, index, total }) {
+  const [showCode, setShowCode] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [err, setErr] = useState('');
+  const result = step.result || {};
+  const hasResult = result && Object.keys(result).length > 0 && !result._truncated;
+
+  async function exportXlsx() {
+    setExporting(true); setErr('');
+    try {
+      const url = step.id ? `/ai/data-science/${step.id}/export` : '/ai/data-science/export';
+      const body = step.id ? {} : { analysis: step };
+      const resp = await api.post(url, body, { responseType: 'blob' });
+      const cd = resp.headers?.['content-disposition'] || ''; const m = /filename="?([^"]+)"?/.exec(cd);
+      const fname = (m && m[1]) || 'analysis.xlsx';
+      const dl = URL.createObjectURL(new Blob([resp.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      const a = document.createElement('a'); a.href = dl; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(dl);
+    } catch (e) { setErr(await errMsg(e)); } finally { setExporting(false); }
+  }
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        {total > 1 && <span style={{ width: 22, height: 22, borderRadius: 999, background: C.navy, color: '#fff', fontSize: '.72rem', fontWeight: 800, display: 'grid', placeItems: 'center' }}>{index + 1}</span>}
+        <div style={{ fontWeight: 800, color: C.navy, fontSize: '.95rem' }}>{step.question}</div>
+      </div>
+
+      {!step.ok && <ErrBox>{step.error || 'The analysis could not be completed.'}{step.blocked ? ' (the generated code was blocked by the sandbox)' : ''}</ErrBox>}
+
+      {step.ok && (
+        <>
+          {step.narrative && (
+            <div style={{ background: 'linear-gradient(135deg,#012158,#0c2f6b)', color: '#fff', borderRadius: 14, padding: 20, marginBottom: 14, whiteSpace: 'pre-wrap', fontSize: '.9rem', lineHeight: 1.65 }}>{step.narrative}</div>
           )}
           {hasResult && <ResultView result={result} />}
-          {(out.charts || []).length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginTop: 4 }}>
-              {out.charts.map((c, i) => (
+          {(step.charts || []).length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginBottom: 4 }}>
+              {step.charts.map((c, i) => (
                 <div key={i} style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, padding: 12 }}>
                   <img alt={`Chart ${i + 1}`} src={`data:image/png;base64,${c}`} style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 8 }} />
                 </div>
               ))}
             </div>
           )}
-          {out.code && (
-            <div style={{ marginTop: 16 }}>
+          {err && <ErrBox>{err}</ErrBox>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <button onClick={exportXlsx} disabled={exporting} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 13px', fontSize: '.8rem', fontWeight: 700, color: C.navy, cursor: 'pointer', opacity: exporting ? 0.6 : 1 }}>
+              <Download size={15} /> {exporting ? 'Exporting…' : 'Export to Excel'}
+            </button>
+            {step.code && (
               <button onClick={() => setShowCode((v) => !v)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 13px', fontSize: '.8rem', fontWeight: 700, color: C.navy, cursor: 'pointer' }}>
-                <Code2 size={15} /> {showCode ? 'Hide analysis code' : 'View analysis code'} <ChevronDown size={14} style={{ transform: showCode ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+                <Code2 size={15} /> {showCode ? 'Hide code' : 'View code'} <ChevronDown size={14} style={{ transform: showCode ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
               </button>
-              {showCode && (
-                <pre style={{ marginTop: 10, background: '#0c1627', color: '#dbe7ff', borderRadius: 12, padding: 16, overflowX: 'auto', fontSize: '.78rem', lineHeight: 1.55, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{out.code}</pre>
-              )}
-            </div>
+            )}
+          </div>
+          {showCode && step.code && (
+            <pre style={{ marginTop: 10, background: '#0c1627', color: '#dbe7ff', borderRadius: 12, padding: 16, overflowX: 'auto', fontSize: '.78rem', lineHeight: 1.55, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{step.code}</pre>
           )}
-        </div>
+        </>
       )}
+    </div>
+  );
+}
+
+function HistoryDrawer({ history, onClose, onOpen, onDelete }) {
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(6,20,45,.38)', zIndex: 60, display: 'flex', justifyContent: 'flex-end' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(440px, 92vw)', background: '#fff', height: '100%', boxShadow: '-8px 0 24px rgba(1,33,88,.18)', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '18px 20px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontWeight: 800, color: C.navy, fontSize: '1rem' }}>Saved analyses</div>
+          <button onClick={onClose} style={{ border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer', fontSize: '1.2rem', lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+          {history == null && <div style={{ color: C.muted, padding: 16, fontSize: '.86rem' }}>Loading…</div>}
+          {history && history.length === 0 && <div style={{ color: C.muted, padding: 16, fontSize: '.86rem' }}>No saved analyses yet.</div>}
+          {(history || []).map((h) => (
+            <div key={h._id} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                <button onClick={() => onOpen(h._id)} style={{ textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer', flex: 1, padding: 0 }}>
+                  <div style={{ fontWeight: 700, color: C.navy, fontSize: '.86rem', lineHeight: 1.4 }}>{h.question}</div>
+                  <div style={{ fontSize: '.74rem', color: C.muted, marginTop: 4 }}>
+                    {h.datasetLabel || h.dataset} · {new Date(h.createdAt).toLocaleString()} {h.ok ? '' : '· failed'}
+                  </div>
+                </button>
+                <button onClick={() => onDelete(h._id)} title="Delete" style={{ border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer' }}><Trash2 size={15} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

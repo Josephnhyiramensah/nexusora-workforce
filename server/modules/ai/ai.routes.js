@@ -31,7 +31,12 @@ router.post('/analyze/narrative', authorise(...READ), c.analyzeNarrative);
 router.post('/excel/build', express.json({ limit: '30mb' }), authorise(...READ), c.excelBuild);
 
 // Data scientist — Claude writes analysis code, runs it in the locked sandbox.
+router.get('/data-science/datasets', authorise(...READ), c.dataScienceDatasets);
+router.get('/data-science/history', authorise(...READ), c.dataScienceHistory);
 router.post('/data-science', express.json({ limit: '30mb' }), authorise(...READ), c.dataScience);
 router.post('/data-science/upload', authorise(...READ), upload.single('file'), c.dataScienceUpload);
+router.get('/data-science/:id', authorise(...READ), c.dataScienceGet);
+router.delete('/data-science/:id', authorise(...READ), c.dataScienceDelete);
+router.post('/data-science/:id/export', authorise(...READ), c.dataScienceExport);
 
 module.exports = router;

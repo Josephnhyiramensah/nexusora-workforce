@@ -18,19 +18,25 @@ writes {"ok": bool, "result": {...}, "charts": [b64png...], "stdout": "...",
 "error": "..."} to stdout. Numbers are computed from the data — never invented.
 """
 import sys
+import os
 import json
 import ast
 import io
 import base64
+import time
+import threading
 
 # ---- hard resource limits (best-effort; applied before running user code) ---
 LIMIT_AS = 1536 * 1024 * 1024  # 1.5 GB address space (fits the SciPy/sklearn
 #                                mmaps + a tenant dataset; still kills multi-GB
 #                                allocation bombs with wide margin)
 LIMIT_CPU = 12                 # 12 s CPU seconds (parent also wall-clock bounds us)
+WALL_LIMIT = float(os.environ.get('SANDBOX_WALL', '15'))  # seconds, hard wall clock
 
 
 def set_limits():
+    """POSIX resource caps. No-op on Windows (RLIMIT absent) — the watchdog and
+    the parent's wall-clock kill cover that case instead."""
     try:
         import resource
     except Exception:
@@ -47,6 +53,59 @@ def set_limits():
             resource.setrlimit(res, (soft, soft))
         except Exception:
             pass
+
+
+def _rss_bytes():
+    """Current process memory, cross-platform and best-effort. 0 if unknown."""
+    try:
+        import resource
+        ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux reports kB, macOS reports bytes.
+        return int(ru) if sys.platform == 'darwin' else int(ru) * 1024
+    except Exception:
+        pass
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [
+                ('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD),
+                ('PeakWorkingSetSize', ctypes.c_size_t), ('WorkingSetSize', ctypes.c_size_t),
+                ('QuotaPeakPagedPoolUsage', ctypes.c_size_t), ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t), ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                ('PagefileUsage', ctypes.c_size_t), ('PeakPagefileUsage', ctypes.c_size_t),
+            ]
+        counters = _PMC()
+        counters.cb = ctypes.sizeof(_PMC)
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            return int(counters.WorkingSetSize)
+    except Exception:
+        pass
+    return 0
+
+
+def start_watchdog():
+    """A daemon thread that hard-kills the process if it runs too long or uses too
+    much memory. This is the containment backstop where POSIX RLIMIT is absent
+    (Windows) and for CPU loops that RLIMIT_CPU would only catch in CPU-seconds.
+    Pure-Python loops release the GIL on the switch interval, so this thread does
+    get scheduled; os._exit skips cleanup so there is no escape via atexit/finally."""
+    deadline = time.time() + WALL_LIMIT
+
+    def loop():
+        while True:
+            time.sleep(0.25)
+            if time.time() > deadline:
+                os._exit(137)
+            rss = _rss_bytes()
+            if rss and rss > LIMIT_AS:
+                os._exit(137)
+
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    return t
 
 
 # --------------------------------------------------------------------------- #
@@ -230,7 +289,9 @@ def main():
     except Exception:
         plt = None
 
-    # Run the user code with stdout captured.
+    # Run the user code with stdout captured. The watchdog starts HERE so the
+    # wall clock bounds the user code, not the (slower, trusted) library warmup.
+    start_watchdog()
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf
