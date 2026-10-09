@@ -252,4 +252,35 @@ const respond = asyncHandler(async (req, res) => {
   res.status(201).json({ message: 'Thanks — your response was recorded.' });
 });
 
-module.exports = { listSurveys, createSurvey, getSurvey, updateSurvey, deleteSurvey, surveyResults, mySurveys, respond };
+// GET /engagement/trends — eNPS + engagement score across surveys over time.
+const trends = asyncHandler(async (req, res) => {
+  const Survey = req.tenantConn.model('Survey');
+  const SurveyResponse = req.tenantConn.model('SurveyResponse');
+  const surveys = await Survey.find({ status: { $in: ['open', 'closed'] } }).sort({ openedAt: 1, createdAt: 1 }).lean();
+  const series = [];
+  for (const s of surveys) {
+    const responses = await SurveyResponse.find({ surveyId: s._id }).select('answers').lean();
+    const npsQ = s.questions.find((q) => q.kind === 'nps');
+    let enps = null;
+    if (npsQ) {
+      const nums = [];
+      for (const r of responses) for (const a of (r.answers || [])) if (String(a.questionId) === String(npsQ._id)) { const v = Number(a.value); if (Number.isFinite(v) && v >= 0 && v <= 10) nums.push(v); }
+      if (nums.length) { const pro = nums.filter((x) => x >= 9).length, det = nums.filter((x) => x <= 6).length; enps = Math.round(((pro - det) / nums.length) * 100); }
+    }
+    const scaleIds = new Set(s.questions.filter((q) => q.kind === 'scale').map((q) => String(q._id)));
+    const sv = [];
+    for (const r of responses) for (const a of (r.answers || [])) if (scaleIds.has(String(a.questionId))) { const v = Number(a.value); if (Number.isFinite(v)) sv.push(v); }
+    const scaleAvg = sv.length ? +(sv.reduce((x, y) => x + y, 0) / sv.length).toFixed(2) : null;
+    const eligible = await audienceCount(req, s);
+    series.push({
+      id: String(s._id), title: s.title, type: s.type,
+      date: s.openedAt || s.createdAt,
+      responses: responses.length, eligible,
+      rate: eligible ? Math.round((responses.length / eligible) * 100) : null,
+      enps, scaleAvg,
+    });
+  }
+  res.json({ series });
+});
+
+module.exports = { listSurveys, createSurvey, getSurvey, updateSurvey, deleteSurvey, surveyResults, mySurveys, respond, trends };

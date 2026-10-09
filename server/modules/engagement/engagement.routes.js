@@ -13,6 +13,7 @@ router.use(protect, resolveTenant);
 // Self-service "me" routes before '/:id' so 'me' isn't captured as an id.
 router.get('/me/surveys', authorise(...SELF), c.mySurveys);
 
+router.get('/trends', authorise(...HR), c.trends);
 router.get('/surveys', authorise(...HR), c.listSurveys);
 router.post('/surveys', authorise(...HR), c.createSurvey);
 router.get('/surveys/:id', authorise(...HR), c.getSurvey);

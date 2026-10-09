@@ -8,7 +8,7 @@ import {
 import { C, NUM, cap, rowStyle, td, primaryBtn, ghostBtn } from '../ui/tokens';
 import {
   Smile, ClipboardList, BarChart3, MessageSquare, Plus, Trash2, Play, Square,
-  Send, RefreshCw, Users, PieChart, Inbox,
+  Send, RefreshCw, Users, PieChart, Inbox, TrendingUp,
 } from 'lucide-react';
 
 const WRITE_ROLES = ['super_admin', 'hr_manager', 'hr_officer'];
@@ -21,12 +21,13 @@ const TYPE_LABEL = { pulse: 'Pulse', enps: 'eNPS', custom: 'Custom' };
 export default function EngagementPage() {
   const { user } = useAuth();
   const isHR = WRITE_ROLES.includes(user?.role);
-  const [section, setSection] = useState(isHR ? 'surveys' : 'answer');
+  const [section, setSection] = useState(isHR ? 'overview' : 'answer');
 
   const groups = [{
     title: 'Engagement',
     items: [
       ...(isHR ? [
+        { key: 'overview', label: 'Overview', Icon: TrendingUp },
         { key: 'surveys', label: 'Surveys', Icon: ClipboardList },
         { key: 'results', label: 'Results', Icon: BarChart3 },
       ] : []),
@@ -36,6 +37,7 @@ export default function EngagementPage() {
 
   return (
     <ModuleShell brand={{ title: 'Engagement', subtitle: 'Listen & act', Icon: Smile }} groups={groups} active={section} onSelect={setSection}>
+      {section === 'overview' && isHR && <Overview />}
       {section === 'surveys' && isHR && <Surveys />}
       {section === 'results' && isHR && <Results />}
       {section === 'answer' && <AnswerSurveys />}
@@ -113,6 +115,77 @@ function Bars({ data }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/* =============================== OVERVIEW =============================== */
+function Overview() {
+  const [series, setSeries] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => { (async () => { try { const { data } = await api.get('/engagement/trends'); setSeries(data.series || []); } catch (e) { setErr(e?.response?.data?.message || 'Could not load the overview.'); } })(); }, []);
+
+  const withNps = (series || []).filter((p) => p.enps != null);
+  const latest = withNps[withNps.length - 1];
+  const prev = withNps[withNps.length - 2];
+  const delta = latest && prev ? latest.enps - prev.enps : null;
+  const avgRate = (series || []).filter((p) => p.rate != null);
+  const meanRate = avgRate.length ? Math.round(avgRate.reduce((s, p) => s + p.rate, 0) / avgRate.length) : null;
+
+  return (
+    <>
+      <Hero crumbs={['Engagement', 'Overview']} title="Overview" />
+      {series && (
+        <KpiBand>
+          <Kpi Icon={PieChart} iconBg={latest && latest.enps >= 0 ? '#e7f7ee' : '#fdecec'} iconColor={latest && latest.enps >= 0 ? '#1f9d57' : C.red} label="Latest eNPS" value={latest ? latest.enps : '—'}
+            foot={delta != null ? <span style={{ color: delta >= 0 ? '#1f9d57' : C.red, fontWeight: 700 }}>{delta >= 0 ? '▲' : '▼'} {Math.abs(delta)} vs previous</span> : null} />
+          <Kpi Icon={Users} label="Avg response rate" value={meanRate == null ? '—' : meanRate} unit={meanRate == null ? '' : '%'} />
+          <Kpi Icon={ClipboardList} label="Surveys run" value={series.length} />
+          <Kpi Icon={Inbox} label="Total responses" value={series.reduce((n, p) => n + (p.responses || 0), 0)} />
+        </KpiBand>
+      )}
+      <Body>
+        {err && <ErrBox>{err}</ErrBox>}
+        {!series ? <Empty>Loading…</Empty>
+          : series.length === 0 ? <Card><Empty>No open or closed surveys yet — run a pulse to start the trend.</Empty></Card>
+            : (
+              <>
+                <Card title="eNPS over time">
+                  {withNps.length ? <TrendChart points={withNps.map((p) => ({ label: p.title, value: p.enps }))} min={-100} max={100} zero /> : <Empty>No eNPS questions yet.</Empty>}
+                </Card>
+                <Card title="Response rate over time">
+                  {avgRate.length ? <TrendChart points={avgRate.map((p) => ({ label: p.title, value: p.rate }))} min={0} max={100} pct /> : <Empty>No participation data yet.</Empty>}
+                </Card>
+              </>
+            )}
+      </Body>
+    </>
+  );
+}
+
+function TrendChart({ points, min, max, zero, pct }) {
+  const w = 720, h = 220, padL = 40, padR = 16, padT = 16, padB = 46;
+  const n = points.length;
+  const x = (i) => padL + (n <= 1 ? (w - padL - padR) / 2 : (i * (w - padL - padR)) / (n - 1));
+  const y = (v) => padT + (1 - (v - min) / (max - min)) * (h - padT - padB);
+  const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
+  const gridVals = pct ? [0, 25, 50, 75, 100] : [-100, -50, 0, 50, 100];
+  return (
+    <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
+      {gridVals.map((g) => (
+        <g key={g}>
+          <line x1={padL} y1={y(g)} x2={w - padR} y2={y(g)} stroke={g === 0 && zero ? '#c7d2e0' : '#eef2f8'} strokeWidth={g === 0 && zero ? 1.4 : 1} />
+          <text x={padL - 8} y={y(g) + 3} textAnchor="end" style={{ fontSize: 9, fill: C.muted2, ...NUM }}>{g}{pct ? '%' : ''}</text>
+        </g>
+      ))}
+      <path d={path} fill="none" stroke={C.accentInk} strokeWidth="2.5" />
+      {points.map((p, i) => (
+        <g key={i}>
+          <circle cx={x(i)} cy={y(p.value)} r="4" fill={C.navy} />
+          <text x={x(i)} y={y(p.value) - 9} textAnchor="middle" style={{ fontSize: 9, fontWeight: 700, fill: C.navy, ...NUM }}>{p.value}{pct ? '%' : ''}</text>
+          <text x={x(i)} y={h - 16} textAnchor="middle" style={{ fontSize: 8.5, fill: C.muted2 }}>{p.label.length > 14 ? p.label.slice(0, 12) + '…' : p.label}</text>
+        </g>
+      ))}
+    </svg>
   );
 }
 
