@@ -591,6 +591,21 @@ function ImportWizard() {
 
   function reset() { setStep('upload'); setFile(null); setAn(null); setMap([]); setReport(null); setFixRows([]); setErr(''); }
 
+  // Recompute the validation preview whenever the mapping is edited (debounced).
+  useEffect(() => {
+    if (step !== 'review' || !file) return;
+    const t = setTimeout(async () => {
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('mapping', JSON.stringify(map));
+        const { data } = await api.post('/employees/import/analyze', fd);
+        setAn((prev) => (prev ? { ...prev, preview: data.preview } : prev));
+      } catch { /* keep the last preview */ }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [map, step, file]);
+
   if (!canImport) {
     return <div><PageHead title="Import employees" subtitle="" />
       <Card><div style={{ color: C.muted, fontSize: '.88rem' }}>You don’t have permission to import employees. Ask an HR manager or administrator.</div></Card></div>;

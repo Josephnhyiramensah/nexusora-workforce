@@ -473,6 +473,16 @@ const importAnalyze = asyncHandler(async (req, res) => {
   if (!headers.length) return res.status(400).json({ message: 'The file has no header row.' });
   if (!rows.length) return res.status(400).json({ message: 'The file has a header row but no data rows.' });
 
+  // Re-preview with an edited mapping (from the wizard's Review step) — no re-map.
+  if (req.body.mapping) {
+    let m; try { m = JSON.parse(req.body.mapping); } catch { m = null; }
+    if (Array.isArray(m)) {
+      const fullMapping = fieldMap.augmentFullName(headers, m);
+      const preview = fieldMap.buildPreview(headers, rows, fullMapping, { limit: 20 });
+      return res.json({ file: req.file.originalname, rowCount: rows.length, columns: headers, mapping: fullMapping, unmapped: [], aiRefined: false, aiAdded: 0, catalogue: fieldMap.catalogueForUI(), preview });
+    }
+  }
+
   const { mapping, unmapped, byField } = fieldMap.mapColumns(headers);
   const taken = { ...byField };
   const { added, used } = await aiRefineMapping(unmapped, headers, rows, taken);
