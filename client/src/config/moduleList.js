@@ -21,7 +21,7 @@ export const MODULE_GROUPS = [
     { key:'performance', label:'Performance', labelKey:'home.tile.performance', to:'/performance', Icon:TrendingUp, accent:'#3485E9', live:true },
     { key:'learning', label:'Learning', labelKey:'home.tile.learning', to:'/learning', Icon:GraduationCap, accent:'#7c5cdf', live:true },
     { key:'succession', label:'Succession', labelKey:'home.tile.succession', to:'/succession', Icon:Network, accent:'#012158', live:true },
-    { key:'engagement', label:'Engagement', labelKey:'home.tile.engagement', to:'/engagement', Icon:Smile, accent:'#e5484d', live:false },
+    { key:'engagement', label:'Engagement', labelKey:'home.tile.engagement', to:'/engagement', Icon:Smile, accent:'#e5484d', live:true },
   ]},
   { title: 'Care & Cases', titleKey: 'home.groups.care', items: [
     { key:'welfare', label:'Welfare & Social', labelKey:'home.tile.welfare', to:'/welfare', Icon:HeartHandshake, accent:'#1f9d57', live:true },

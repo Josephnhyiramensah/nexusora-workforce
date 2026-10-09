@@ -27,6 +27,7 @@ import SuccessionPage from './pages/SuccessionPage';
 import EmployeeRelationsPage from './pages/EmployeeRelationsPage';
 import AIAdvisorPage from './pages/AIAdvisorPage';
 import WelfareSocialPage from './pages/WelfareSocialPage';
+import EngagementPage from './pages/EngagementPage';
 export default function App() {
   return (
     <CurrencyProvider>
@@ -56,6 +57,7 @@ export default function App() {
       <Route path="/relations" element={<ProtectedRoute><AppShell><EmployeeRelationsPage /></AppShell></ProtectedRoute>} />
       <Route path="/ai-advisor" element={<ProtectedRoute><AppShell><AIAdvisorPage /></AppShell></ProtectedRoute>} />
       <Route path="/welfare" element={<ProtectedRoute><AppShell><WelfareSocialPage /></AppShell></ProtectedRoute>} />
+      <Route path="/engagement" element={<ProtectedRoute><AppShell><EngagementPage /></AppShell></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </CurrencyProvider>

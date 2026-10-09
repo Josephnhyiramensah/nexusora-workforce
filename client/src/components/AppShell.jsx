@@ -12,7 +12,7 @@ import { C, FONT, initials, fullName } from '../ui/tokens';
 import {
   Home, Users, Wallet, Gauge, BarChart3, Grid3x3, Search, LogOut, Settings,
   Building2, Briefcase, FileText, UserPlus, ClipboardCheck, CalendarClock, CalendarDays,
-  ShieldCheck, TrendingUp, GraduationCap, Network, HeartHandshake, Scale, Sparkles, IdCard,
+  ShieldCheck, TrendingUp, GraduationCap, Network, HeartHandshake, Scale, Sparkles, IdCard, Smile,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import ErrorBoundary from './ErrorBoundary';
@@ -40,6 +40,7 @@ const MODULES = [
     { label: 'Performance', to: '/performance', Icon: TrendingUp, accent: '#3485E9' },
     { label: 'Learning', to: '/learning', Icon: GraduationCap, accent: '#7c5cdf' },
     { label: 'Succession', to: '/succession', Icon: Network, accent: '#012158' },
+    { label: 'Engagement', to: '/engagement', Icon: Smile, accent: '#e5484d' },
   ] },
   { group: 'Care & Cases', items: [
     { label: 'Welfare & Social', to: '/welfare', Icon: HeartHandshake, accent: '#1f9d57' },
@@ -56,7 +57,7 @@ const MODULES = [
 const PRIMARY = [
   { label: 'Home', tKey: 'nav.home', to: '/', Icon: Home, match: (p) => p === '/' },
   { label: 'People', tKey: 'nav.people', to: '/employees', Icon: Users, match: (p) => ['/employees', '/organization', '/positions', '/job-descriptions', '/self-service', '/recruitment', '/onboarding'].some((x) => p.startsWith(x)) },
-  { label: 'Welfare', tKey: 'nav.welfare', to: '/welfare', Icon: HeartHandshake, match: (p) => ['/welfare', '/relations', '/learning', '/succession', '/performance'].some((x) => p.startsWith(x)) },
+  { label: 'Welfare', tKey: 'nav.welfare', to: '/welfare', Icon: HeartHandshake, match: (p) => ['/welfare', '/relations', '/learning', '/succession', '/performance', '/engagement'].some((x) => p.startsWith(x)) },
   { label: 'Analytics', tKey: 'nav.analytics', to: '/analytics', Icon: BarChart3, match: (p) => ['/analytics', '/documents', '/workforce-planning', '/ai-advisor', '/payroll', '/attendance', '/leave', '/compliance'].some((x) => p.startsWith(x)) },
 ];
 

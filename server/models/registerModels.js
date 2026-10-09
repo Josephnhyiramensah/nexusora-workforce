@@ -33,6 +33,8 @@ function registerAllModels(conn) {
     require('./tenant/StaffLoan'),
     require('./tenant/WelfareClaim'),
     require('./tenant/WelfareScheme'),
+    require('./tenant/Survey'),
+    require('./tenant/SurveyResponse'),
     require('./tenant/Notification'),
     require('./tenant/ExchangeRate'),
     require('./tenant/ApiKey'),
