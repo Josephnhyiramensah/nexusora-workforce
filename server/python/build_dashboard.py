@@ -119,6 +119,47 @@ def _apply_derived(df, derived, warnings):
     return df
 
 
+_DATE_HINTS = ("hiredate", "hire_date", "hireperiod", "datejoined", "date_joined", "joined",
+               "startdate", "start_date", "dateemployed", "employmentdate", "date", "period", "month")
+
+
+def _detect_dates(df):
+    """Find a date/period column (name hint first, then any parseable object col).
+    Returns (col_name, datetime Series) or (None, None)."""
+    def _try(col):
+        s = df[col]
+        nn = s.notna().sum()
+        if not nn:
+            return None
+        p = pd.to_datetime(s.astype(str).str.strip(), errors="coerce", format="mixed")
+        return p if (p.notna().sum() >= 0.6 * nn and p.notna().sum() >= 3) else None
+
+    low = {c: c.lower().replace(" ", "").replace("-", "").replace("_", "") for c in df.columns}
+    for hint in _DATE_HINTS:
+        for c in df.columns:
+            if hint in low[c]:
+                p = _try(c)
+                if p is not None:
+                    return c, p
+    for c in df.columns:
+        if df[c].dtype == object:
+            p = _try(c)
+            if p is not None:
+                return c, p
+    return None, None
+
+
+def _linreg_project(y, ahead):
+    import numpy as _np
+    y = _np.asarray(y, dtype=float)
+    k = len(y)
+    if k < 2:
+        return [float(y[-1])] * ahead if k else []
+    x = _np.arange(k, dtype=float)
+    slope, intercept = _np.polyfit(x, y, 1)
+    return [float(max(0.0, slope * (k + i) + intercept)) for i in range(ahead)]
+
+
 def _fmt_code(kind, currency):
     cur = (currency or "").upper()
     sym = {"USD": "$", "GHS": "GH₵ ", "NGN": "₦", "EUR": "€", "GBP": "£", "KES": "KSh ",
@@ -448,6 +489,125 @@ def build(job):
     else:
         ws_piv.write(0, 0, "Pivot Matrix", f_section)
         ws_piv.write(2, 0, "Need two categorical columns (e.g. Department and Gender) to build a cross-tab.", f_note)
+
+    # ---------- TRENDS sheet (activity per month + moving avg + projection) ---------- #
+    date_col, dser = _detect_dates(df)
+    if date_col is not None:
+        per = dser.dt.to_period("M")
+        vc = per.value_counts().sort_index()
+        vc = vc[vc.index.notna()]
+        if len(vc) >= 4:
+            periods = [str(p) for p in vc.index]
+            counts = [int(v) for v in vc.values]
+            ma = pd.Series(counts).rolling(3, min_periods=1).mean().round(2).tolist()
+            proj = _linreg_project(counts, 3)
+            last = vc.index[-1]
+            proj_periods = [str(last + i) for i in range(1, 4)]
+
+            ws_tr = wb.add_worksheet("Trends")
+            ws_tr.hide_gridlines(2)
+            ws_tr.write(0, 0, f"Activity over time — by {date_col} (monthly)", f_section)
+            hdr_r = 1
+            for j, h in enumerate(["Period", "Count", "3-mo avg", "Projected"]):
+                ws_tr.write(hdr_r, j, h, f_hdr)
+            cnt_fmt = num_format("#,##0")
+            ma_fmt = num_format("#,##0.0")
+            proj_fmt = wb.add_format({**base_font, "font_size": 10, "num_format": "#,##0.0", "italic": True, "font_color": accent, "border": 1, "border_color": "#E3EAF5"})
+            r = hdr_r + 1
+            for i, p in enumerate(periods):
+                ws_tr.write(r, 0, p, f_cell)
+                ws_tr.write_number(r, 1, counts[i], cnt_fmt)
+                ws_tr.write_number(r, 2, ma[i], ma_fmt)
+                ws_tr.write_blank(r, 3, None, f_cell)
+                r += 1
+            proj_start = r
+            for i, p in enumerate(proj_periods):
+                ws_tr.write(r, 0, p, f_cell)
+                ws_tr.write_blank(r, 1, None, f_cell)
+                ws_tr.write_blank(r, 2, None, f_cell)
+                ws_tr.write_number(r, 3, round(proj[i], 1), proj_fmt)
+                r += 1
+            data_end = hdr_r + len(periods)            # last historical row (0-based)
+            all_end = r - 1
+            # Line chart: Count + 3-mo avg over history, Projected tail.
+            chart = wb.add_chart({"type": "line"})
+            chart.add_series({"name": "Count", "categories": ["Trends", hdr_r + 1, 0, all_end, 0],
+                              "values": ["Trends", hdr_r + 1, 1, data_end, 1],
+                              "line": {"color": primary, "width": 1.75}})
+            chart.add_series({"name": "3-mo avg", "categories": ["Trends", hdr_r + 1, 0, all_end, 0],
+                              "values": ["Trends", hdr_r + 1, 2, data_end, 2],
+                              "line": {"color": accent, "width": 1.5, "dash_type": "dash"}})
+            chart.add_series({"name": "Projected", "categories": ["Trends", hdr_r + 1, 0, all_end, 0],
+                              "values": ["Trends", proj_start, 3, all_end, 3],
+                              "line": {"color": "#c77700", "width": 1.5, "dash_type": "round_dot"},
+                              "marker": {"type": "circle", "size": 5}})
+            chart.set_title({"name": f"Activity by {date_col}", "name_font": {"name": "Arial", "size": 11, "bold": True, "color": primary}})
+            chart.set_legend({"position": "bottom"})
+            chart.set_x_axis({"num_font": {"name": "Arial", "size": 7, "rotation": -45}})
+            chart.set_y_axis({"num_font": {"name": "Arial", "size": 8}})
+            chart.set_size({"width": 640, "height": 320})
+            ws_tr.insert_chart(hdr_r, 5, chart)
+            ws_tr.set_column(0, 0, 12)
+            ws_tr.set_column(1, 3, 11)
+            ws_tr.write(all_end + 2, 0, "Projection = least-squares linear trend, 3 months ahead. A forecast, not a guarantee.", f_note)
+            extra_sheets.append("Trends")
+
+    # ---------- RETENTION sheet (hire cohorts → share still active) ---------- #
+    status_col_name = None
+    for c in df.columns:
+        if "status" in c.lower():
+            status_col_name = c
+            break
+    if date_col is not None and status_col_name is not None:
+        active = ~df[status_col_name].astype(str).str.lower().isin(["terminated", "exited", "left", "resigned", "inactive"])
+        cohort = dser.dt.year
+        cdf = pd.DataFrame({"cohort": cohort, "active": active.astype(int)}).dropna(subset=["cohort"])
+        grp = cdf.groupby("cohort")["active"].agg(["size", "sum"])
+        grp = grp[grp["size"] >= 3]
+        if len(grp) >= 2:
+            ws_rt = wb.add_worksheet("Retention")
+            ws_rt.hide_gridlines(2)
+            ws_rt.write(0, 0, "Retention by hire cohort (share still active)", f_section)
+            hdr_r = 1
+            for j, h in enumerate(["Hire year", "Hires", "Still active", "Retention"]):
+                ws_rt.write(hdr_r, j, h, f_hdr)
+            int_fmt = num_format("#,##0")
+            pct_fmt = num_format("0.0%")
+            rows_written = 0
+            r = hdr_r + 1
+            retentions = []
+            for yr, row in grp.iterrows():
+                ret = float(row["sum"]) / float(row["size"]) if row["size"] else 0.0
+                retentions.append(ret)
+                ws_rt.write_number(r, 0, int(yr), num_format("0"))
+                ws_rt.write_number(r, 1, int(row["size"]), int_fmt)
+                ws_rt.write_number(r, 2, int(row["sum"]), int_fmt)
+                ws_rt.write_number(r, 3, round(ret, 4), pct_fmt)
+                r += 1
+                rows_written += 1
+            # Heat-map the retention column: red (low) → white → green (high).
+            ws_rt.conditional_format(hdr_r + 1, 3, hdr_r + rows_written, 3, {
+                "type": "3_color_scale",
+                "min_type": "num", "min_value": 0, "min_color": "#E5484D",
+                "mid_type": "num", "mid_value": 0.75, "mid_color": "#FFF8E6",
+                "max_type": "num", "max_value": 1, "max_color": "#1f9d57",
+            })
+            # Column chart of retention by cohort.
+            chart = wb.add_chart({"type": "column"})
+            chart.add_series({"name": "Retention", "categories": ["Retention", hdr_r + 1, 0, hdr_r + rows_written, 0],
+                              "values": ["Retention", hdr_r + 1, 3, hdr_r + rows_written, 3],
+                              "fill": {"color": accent}, "gap": 60,
+                              "data_labels": {"value": True, "num_format": "0%", "font": {"name": "Arial", "size": 8}}})
+            chart.set_title({"name": "Retention-to-date by hire year", "name_font": {"name": "Arial", "size": 11, "bold": True, "color": primary}})
+            chart.set_legend({"position": "none"})
+            chart.set_y_axis({"min": 0, "max": 1, "num_format": "0%", "num_font": {"name": "Arial", "size": 8}})
+            chart.set_x_axis({"num_font": {"name": "Arial", "size": 8}})
+            chart.set_size({"width": 520, "height": 300})
+            ws_rt.insert_chart(hdr_r, 5, chart)
+            ws_rt.set_column(0, 0, 11)
+            ws_rt.set_column(1, 3, 13)
+            ws_rt.write(hdr_r + rows_written + 2, 0, "“Retention” = share of each hire-year cohort still active now (snapshot), not a full survival curve.", f_note)
+            extra_sheets.append("Retention")
 
     # ---------- DASHBOARD sheet ---------- #
     ws = wb.add_worksheet("Dashboard")

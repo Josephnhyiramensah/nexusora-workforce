@@ -41,6 +41,9 @@ function friendlyPyError(stderr, code) {
 const yrs = (d) => { if (!d) return null; const y = (Date.now() - new Date(d)) / (365.25 * 864e5); return y >= 0 ? +y.toFixed(1) : null; };
 const hireOf = (e) => e?.employment?.hireDate || e?.hireDate || e?.employment?.dateEmployed || e?.employment?.startDate || null;
 const cap = (s) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : '');
+// ISO date (YYYY-MM-DD) and period (YYYY-MM) from any parseable date, else null.
+const isoDate = (d) => { if (!d) return null; const t = new Date(d); return Number.isNaN(t.getTime()) ? null : t.toISOString().slice(0, 10); };
+const periodOf = (d) => { const s = isoDate(d); return s ? s.slice(0, 7) : null; };
 
 // Flatten raw Employee docs into clean, analysis-ready rows.
 function rowsFromEmployees(emps) {
@@ -57,6 +60,8 @@ function rowsFromEmployees(emps) {
     salary: (e?.compensation?.baseSalary != null && e.compensation.baseSalary !== '') ? Number(e.compensation.baseSalary) : null,
     age: (() => { const a = yrs(e.dateOfBirth || e?.employment?.dateOfBirth); return a != null ? Math.round(a) : null; })(),
     tenureYears: yrs(hireOf(e)),
+    hireDate: isoDate(hireOf(e)),          // real date axis for trend/cohort analysis
+    hirePeriod: periodOf(hireOf(e)),        // YYYY-MM cohort/period key
   }));
 }
 

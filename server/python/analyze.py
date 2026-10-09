@@ -109,6 +109,52 @@ def _coerce(df):
     return df
 
 
+_DATE_HINTS = ("hiredate", "hire_date", "hireperiod", "datejoined", "date_joined", "joined",
+               "startdate", "start_date", "dateemployed", "employmentdate", "date", "period", "month")
+
+
+def _find_date_col(df):
+    """Detect a date/period column. Prefer name hints; verify it parses as dates
+    for ≥60% of non-null values. Returns (col_name, pandas datetime Series) or (None, None)."""
+    def _try(col):
+        s = df[col]
+        nn = s.notna().sum()
+        if not nn:
+            return None
+        parsed = pd.to_datetime(s.astype(str).str.strip(), errors="coerce", format="mixed")
+        if parsed.notna().sum() >= 0.6 * nn and parsed.notna().sum() >= 3:
+            return parsed
+        return None
+
+    low = {c: c.lower().replace(" ", "").replace("-", "").replace("_", "") for c in df.columns}
+    # 1) Columns whose name hints at a date, best-hint first.
+    for hint in _DATE_HINTS:
+        for c in df.columns:
+            if hint in low[c]:
+                p = _try(c)
+                if p is not None:
+                    return c, p
+    # 2) Any object column that parses cleanly as dates (e.g. an unlabelled date col).
+    for c in df.columns:
+        if df[c].dtype == object:
+            p = _try(c)
+            if p is not None:
+                return c, p
+    return None, None
+
+
+def _linreg_project(y, ahead):
+    """Least-squares line through y (indexed 0..k-1); return (slope, [projected ahead])."""
+    y = np.asarray(y, dtype=float)
+    k = len(y)
+    if k < 2:
+        return 0.0, [float(y[-1])] * ahead if k else []
+    x = np.arange(k, dtype=float)
+    slope, intercept = np.polyfit(x, y, 1)
+    proj = [float(max(0.0, slope * (k + i) + intercept)) for i in range(ahead)]
+    return float(slope), proj
+
+
 def analyze(job):
     spec = job.get("spec") or {}
     currency = spec.get("currency") or job.get("currency") or ""
@@ -308,6 +354,69 @@ def analyze(job):
 
     if diversity:
         stats["diversity"] = diversity
+
+    # ---- Trend / forecast over time (needs a date/period column) ----
+    date_col, dates = _find_date_col(df)
+    if date_col is not None:
+        per = dates.dt.to_period("M")
+        counts = per.value_counts().sort_index()
+        counts = counts[counts.index.notna()]
+        if len(counts) >= 4:
+            periods = [str(p) for p in counts.index]
+            vals = [int(v) for v in counts.values]
+            # 3-period moving average (trailing).
+            ma = pd.Series(vals).rolling(3, min_periods=1).mean().round(2).tolist()
+            slope, proj = _linreg_project(vals, 3)
+            last_per = counts.index[-1]
+            proj_periods = [str(last_per + i) for i in range(1, 4)]
+            direction = "rising" if slope > 0.05 else ("declining" if slope < -0.05 else "flat")
+            stats["trend"] = {"column": date_col, "grain": "month",
+                              "periods": periods, "counts": vals,
+                              "moving_avg": ma, "slope_per_month": round(slope, 3),
+                              "direction": direction,
+                              "projection": [{"period": p, "value": round(v, 1)} for p, v in zip(proj_periods, proj)]}
+            avg_pm = sum(vals) / len(vals)
+            findings.append(f"Activity by {date_col} averages {avg_pm:.1f}/month over {len(vals)} months and is {direction} "
+                            f"(≈{proj[0]:.0f} projected next month).")
+            # Optional measure-over-time (e.g. average salary per period).
+            if salary_col:
+                tmp = pd.DataFrame({"p": per, "v": pd.to_numeric(df[salary_col], errors="coerce")}).dropna()
+                mser = tmp.groupby("p")["v"].mean().sort_index()
+                mser = mser[mser.index.notna()]
+                if len(mser) >= 4:
+                    ms, mp = _linreg_project(mser.values, 3)
+                    stats["trend"]["measure"] = {"field": salary_col,
+                                                 "values": [round(float(x), 2) for x in mser.values],
+                                                 "slope_per_month": round(ms, 3),
+                                                 "projection": [round(x, 2) for x in mp]}
+            if direction == "declining" and date_col.lower().find("hire") >= 0:
+                risks.append({"title": "Hiring is slowing",
+                              "detail": f"New additions by {date_col} are trending down (slope {slope:.2f}/month). If attrition holds, headcount erodes."})
+
+    # ---- Cohort / retention (hire cohorts → share still active) ----
+    if date_col is not None and status_col is not None:
+        s_active = ~df[status_col].astype(str).str.lower().isin(["terminated", "exited", "left", "resigned", "inactive"])
+        cohort = dates.dt.year
+        cdf = pd.DataFrame({"cohort": cohort, "active": s_active.astype(int)}).dropna(subset=["cohort"])
+        if len(cdf):
+            grp = cdf.groupby("cohort")["active"].agg(["size", "sum"])
+            grp = grp[grp["size"] >= 3]  # ignore tiny cohorts
+            if len(grp) >= 2:
+                cohorts = []
+                for yr, r in grp.iterrows():
+                    ret = float(r["sum"]) / float(r["size"]) if r["size"] else 0.0
+                    cohorts.append({"cohort": str(int(yr)), "size": int(r["size"]),
+                                    "active": int(r["sum"]), "retention": round(ret, 4)})
+                stats["cohorts"] = {"by": "hire year", "measure": "share still active", "rows": cohorts}
+                worst = min(cohorts, key=lambda c: c["retention"])
+                best = max(cohorts, key=lambda c: c["retention"])
+                findings.append(f"Retention-to-date by hire year ranges {worst['retention']:.0%} "
+                                f"({worst['cohort']}) to {best['retention']:.0%} ({best['cohort']}).")
+                if worst["retention"] < 0.7:
+                    risks.append({"title": f"Weak retention in the {worst['cohort']} cohort",
+                                  "detail": f"Only {worst['retention']:.0%} of {worst['cohort']} hires are still active. Investigate onboarding, role fit and management for that intake."})
+                    recs.append({"action": f"Run an exit/stay analysis on the {worst['cohort']} hire cohort",
+                                 "rationale": "A cohort retaining below 70% is a concentrated, addressable loss."})
 
     # ---- Defaults so there is always something actionable ----
     if not recs:
