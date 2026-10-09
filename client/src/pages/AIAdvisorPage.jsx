@@ -328,7 +328,7 @@ function ExcelStudio() {
   if (step === 'source') {
     return (
       <>
-        <PageHead title="Dashboard Builder" subtitle="Build an interactive dashboard in the browser, then export it to professional Excel." />
+        <PageHead title="Dashboard Builder" subtitle="" />
         <Card>
           <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
             <SrcTab active={source === 'system'} onClick={() => setSource('system')} Icon={Database} label="From system data" />
@@ -346,9 +346,6 @@ function ExcelStudio() {
             style={primaryBtnStyle(loading)}>
             {loading ? <RefreshCw size={16} /> : <Table2 size={16} />} {loading ? 'Loading data…' : 'Load data & start building'}
           </button>
-          <div style={{ fontSize: '.76rem', color: C.muted, marginTop: 12, lineHeight: 1.6 }}>
-            You'll pick KPIs, breakdowns and a filter, see the dashboard update live, then download it as an interactive Excel workbook.
-          </div>
         </Card>
       </>
     );
@@ -369,7 +366,6 @@ function ExcelStudio() {
           <button onClick={suggest} disabled={aiBusy} style={primaryBtnStyle(aiBusy, true)}>{aiBusy ? <RefreshCw size={15} /> : <Wand2 size={15} />} {aiBusy ? 'Designing…' : 'Design it'}</button>
           <button onClick={analyzeAI} disabled={narrBusy} style={{ ...primaryBtnStyle(narrBusy, true), background: '#fff', color: C.navy, border: `1px solid ${C.navy}` }}>{narrBusy ? <RefreshCw size={15} /> : <Sparkles size={15} />} {narrBusy ? 'Analysing…' : 'Analyse figures'}</button>
         </div>
-        <div style={{ fontSize: '.74rem', color: C.muted, marginTop: 8 }}><strong>Design it</strong> picks KPIs & charts from your prompt. <strong>Analyse figures</strong> reads the current dashboard's real numbers and writes findings & recommendations (shown below and added as an “AI Insights” sheet in the Excel).</div>
       </Card>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 420px) 1fr', gap: 16, alignItems: 'start' }} className="nx-builder-grid">
@@ -616,10 +612,6 @@ function ImportWizard() {
 
       {step === 'upload' && (
         <Card>
-          <div style={{ fontSize: '.9rem', color: C.ink, lineHeight: 1.6, marginBottom: 14 }}>
-            Upload your existing employee list — <strong>any column names</strong>. We match them to your fields automatically
-            (Staff ID, names, department, salary, dates…), you review and fix anything, and <strong>nothing is saved until you confirm</strong>.
-          </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => { setFile(e.target.files?.[0] || null); setErr(''); }} style={{ fontSize: '.85rem' }} />
             <button onClick={analyze} disabled={busy || !file} style={primaryBtnStyle(busy || !file, true)}>
@@ -659,7 +651,6 @@ function ImportWizard() {
                 </tbody>
               </table>
             </div>
-            <div style={{ fontSize: '.72rem', color: C.muted, marginTop: 8 }}>Required: <strong>First name</strong> and <strong>Last name</strong> (a single “Name” column is split automatically). Your edits here apply when you import.</div>
           </Card>
 
           <Card title="Validation preview">
@@ -711,7 +702,6 @@ function ImportWizard() {
 
           {fixRows.length > 0 ? (
             <Card title={`Fix ${fixRows.length} rejected row(s) and re-import`}>
-              <div style={{ fontSize: '.78rem', color: C.muted, marginBottom: 10 }}>Edit the cells below (a missing last name is the usual cause), then re-import just these rows.</div>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead><tr><th style={th()}>Row</th>{fixCols.map((c) => <th key={c} style={th()}>{c}</th>)}<th style={th()}>Issues</th></tr></thead>
