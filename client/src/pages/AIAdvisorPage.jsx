@@ -38,13 +38,14 @@ export default function AIAdvisorPage() {
   return (
     <ModuleShell brand={{ title: 'Nexusora HR Assistant', subtitle: 'Data-grounded AI', Icon: Sparkles }} groups={groups} active={section} onSelect={setSection}>
       <div style={{ padding: '0 30px 48px', minWidth: 0 }}>
-        {cfg && !cfg.configured && <NotConfigured />}
-        {cfg && cfg.configured && <>
-          {section === 'insights' && <Insights />}
-          {section === 'ask' && <Ask />}
-          {section === 'builder' && <DashboardBuilder />}
-          {section === 'upload' && <AnalyzeUpload />}
-          {section === 'excel' && <ExcelStudio />}
+        {cfg && <>
+          {/* The Dashboard Builder works WITHOUT AI (local Python analytics). The
+              other sections rely on Claude, so they show a notice when AI is off. */}
+          {section === 'excel' && <ExcelStudio configured={cfg.configured} />}
+          {section === 'insights' && (cfg.configured ? <Insights /> : <NotConfigured />)}
+          {section === 'ask' && (cfg.configured ? <Ask /> : <NotConfigured />)}
+          {section === 'builder' && (cfg.configured ? <DashboardBuilder /> : <NotConfigured />)}
+          {section === 'upload' && (cfg.configured ? <AnalyzeUpload /> : <NotConfigured />)}
         </>}
         {!cfg && <div style={{ color: C.muted, padding: 40 }}>Loading…</div>}
       </div>
@@ -373,7 +374,7 @@ function defaultSpec(cols) {
 const normalizeSpec = (s) => ({ title: s.title || 'Workforce Analytics Dashboard', selector: s.selector || '', kpis: Array.isArray(s.kpis) ? s.kpis : [], breakdowns: Array.isArray(s.breakdowns) ? s.breakdowns : [], derived: Array.isArray(s.derived) ? s.derived : [] });
 const errMsg = async (e) => { let m = e?.response?.data?.message; try { const t = await e?.response?.data?.text?.(); if (t) m = JSON.parse(t).message || m; } catch { /* */ } return m || 'Something went wrong.'; };
 
-function ExcelStudio() {
+function ExcelStudio({ configured }) {
   const { tenant } = useAuth();
   const currency = tenant?.baseCurrency || '';
   const [step, setStep] = useState('source');       // 'source' | 'build'
@@ -386,6 +387,7 @@ function ExcelStudio() {
   const [filterVal, setFilterVal] = useState('(All)');
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
+  const [narrBusy, setNarrBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState('');
   const [done, setDone] = useState('');
@@ -402,7 +404,26 @@ function ExcelStudio() {
   async function loadSystem() { setErr(''); setLoading(true); try { const { data } = await api.get('/ai/dataset/system'); if (!data.rows?.length) { setErr('No employee records to analyse yet.'); } else apply(data); } catch (e) { setErr(await errMsg(e)); } finally { setLoading(false); } }
   async function loadUpload() { if (!file) { setErr('Choose a CSV or Excel file first.'); return; } setErr(''); setLoading(true); try { const fd = new FormData(); fd.append('file', file); const { data } = await api.post('/ai/dataset/upload', fd); apply(data); } catch (e) { setErr(await errMsg(e)); } finally { setLoading(false); } }
 
-  async function suggest() { setAiBusy(true); setErr(''); try { const { data } = await api.post('/ai/spec/suggest', { schema: columns, prompt: aiPrompt, title: spec?.title }); if (data.spec) { setSpec(normalizeSpec(data.spec)); setFilterVal('(All)'); } } catch (e) { setErr(await errMsg(e)); } finally { setAiBusy(false); } }
+  async function suggest() { setAiBusy(true); setErr(''); try { const { data } = await api.post('/ai/spec/suggest', { schema: columns, prompt: aiPrompt, title: spec?.title }); if (data.spec) { setSpec((s) => ({ ...normalizeSpec(data.spec), narrative: s?.narrative })); setFilterVal('(All)'); } } catch (e) { setErr(await errMsg(e)); } finally { setAiBusy(false); } }
+
+  async function analyzeAI() {
+    setNarrBusy(true); setErr('');
+    try {
+      const kpis = spec.kpis.map((k) => ({ label: k.label, value: kpiValue(frows, k), format: k.format }));
+      const breakdowns = spec.breakdowns.map((b) => ({ title: b.title, by: b.by, agg: b.agg, series: breakdownSeries(frows, b) }));
+      const { data } = await api.post('/ai/analyze/narrative', { title: spec.title, prompt: aiPrompt, kpis, breakdowns, meta: { rows: frows.length, currency } });
+      if (data.narrative) setSpec((s) => ({ ...s, narrative: data.narrative }));
+    } catch (e) { setErr(await errMsg(e)); } finally { setNarrBusy(false); }
+  }
+
+  // Deterministic analysis — runs entirely on your server (Python), no AI.
+  async function localAnalyze() {
+    setNarrBusy(true); setErr('');
+    try {
+      const { data } = await api.post('/ai/analyze/auto', { rows: frows, source, spec: { selector: spec.selector } });
+      if (data.narrative) setSpec((s) => ({ ...s, narrative: data.narrative }));
+    } catch (e) { setErr(await errMsg(e)); } finally { setNarrBusy(false); }
+  }
 
   async function download() {
     setExporting(true); setErr(''); setDone('');
@@ -467,13 +488,30 @@ function ExcelStudio() {
         subtitle={`${rows.length.toLocaleString()} rows · ${columns.length} columns`}
         action={<button onClick={() => { setStep('source'); setErr(''); setDone(''); }} style={ghostBtnStyle}>← Change data</button>} />
 
-      {/* AI suggest */}
-      <Card title="Design with AI (optional)">
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g. attrition and avg salary by department and grade, with a gender split"
-            style={{ flex: 1, minWidth: 220, padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, fontSize: '.88rem', fontFamily: 'inherit', color: C.ink }} />
-          <button onClick={suggest} disabled={aiBusy} style={primaryBtnStyle(aiBusy, true)}>{aiBusy ? <RefreshCw size={15} /> : <Sparkles size={15} />} {aiBusy ? 'Thinking…' : 'Suggest'}</button>
-        </div>
+      {/* Analysis — works WITHOUT AI (local Python stats); AI adds design-by-prompt + richer prose */}
+      <Card title="Analysis">
+        {configured ? (
+          <>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g. attrition and avg salary by department and grade, with a gender split"
+                style={{ flex: 1, minWidth: 220, padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, fontSize: '.88rem', fontFamily: 'inherit', color: C.ink }} />
+              <button onClick={suggest} disabled={aiBusy} style={primaryBtnStyle(aiBusy, true)}>{aiBusy ? <RefreshCw size={15} /> : <Wand2 size={15} />} {aiBusy ? 'Designing…' : 'Design it (AI)'}</button>
+              <button onClick={analyzeAI} disabled={narrBusy} style={{ ...primaryBtnStyle(narrBusy, true), background: '#fff', color: C.navy, border: `1px solid ${C.navy}` }}>{narrBusy ? <RefreshCw size={15} /> : <Sparkles size={15} />} Analyse (AI)</button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+              <button onClick={localAnalyze} disabled={narrBusy} style={{ ...primaryBtnStyle(narrBusy, true), background: '#f7f9fc', color: C.ink, border: `1px solid ${C.line}` }}><TrendingUp size={15} /> Analyse (local, no AI)</button>
+              <span style={{ fontSize: '.74rem', color: C.muted }}>Deterministic statistics computed on your server.</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <button onClick={localAnalyze} disabled={narrBusy} style={primaryBtnStyle(narrBusy)}>{narrBusy ? <RefreshCw size={16} /> : <TrendingUp size={16} />} {narrBusy ? 'Analysing…' : 'Analyse figures'}</button>
+            <div style={{ fontSize: '.78rem', color: C.muted, marginTop: 10, lineHeight: 1.6 }}>
+              AI is off, so this builds and analyses <strong>entirely on your server</strong> — no Claude needed. You get real statistics (attrition vs healthy bands, pay-equity gaps, correlations, concentration) as findings & recommendations, shown below and added as an “Insights” sheet on export.
+              Turn on the AI (set <code>ANTHROPIC_API_KEY</code>) to also describe dashboards in words and get richer written narrative.
+            </div>
+          </>
+        )}
       </Card>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 420px) 1fr', gap: 16, alignItems: 'start' }} className="nx-builder-grid">
@@ -569,6 +607,19 @@ function ExcelStudio() {
                 );
               })}
             </div>
+            {spec.narrative && (spec.narrative.summary || (spec.narrative.findings || []).length > 0) && (
+              <div style={{ marginTop: 16, borderTop: `1px solid ${C.line}`, paddingTop: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+                  <Sparkles size={15} color={C.blue} />
+                  <span style={{ fontWeight: 800, color: C.navy, fontSize: '.92rem' }}>{spec.narrative.headline || 'AI Analysis'}</span>
+                </div>
+                {spec.narrative.summary && <div style={{ fontSize: '.84rem', color: C.ink, lineHeight: 1.6, marginBottom: 10 }}>{spec.narrative.summary}</div>}
+                {(spec.narrative.findings || []).length > 0 && <NarrBlock title="Key findings" items={spec.narrative.findings.map((f) => ({ t: String(f) }))} />}
+                {(spec.narrative.risks || []).length > 0 && <NarrBlock title="Risks" items={spec.narrative.risks.map((r) => ({ t: r.title, d: r.detail }))} />}
+                {(spec.narrative.recommendations || []).length > 0 && <NarrBlock title="Recommendations" items={spec.narrative.recommendations.map((r) => ({ t: r.action, d: r.rationale }))} />}
+                <div style={{ fontSize: '.72rem', color: C.muted, marginTop: 8 }}>Generated from the current view{spec.selector && filterVal !== '(All)' ? ` (filtered: ${filterVal})` : ''}. Included as an “Insights” sheet on export.</div>
+              </div>
+            )}
           </Card>
         </div>
       </div>
@@ -577,6 +628,19 @@ function ExcelStudio() {
   );
 }
 
+function NarrBlock({ title, items }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: '.72rem', fontWeight: 800, color: '#0b6fd6', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>{title}</div>
+      {items.map((it, i) => (
+        <div key={i} style={{ display: 'flex', gap: 7, fontSize: '.82rem', color: '#16233b', marginBottom: 5, lineHeight: 1.5 }}>
+          <span style={{ color: '#3485E9', fontWeight: 800 }}>•</span>
+          <span>{it.d ? <><strong>{it.t}</strong> — {it.d}</> : it.t}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 function SrcTab({ active, onClick, Icon, label }) {
   return (
     <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px', borderRadius: 11, cursor: 'pointer', fontWeight: 700, fontSize: '.88rem', fontFamily: 'inherit',

@@ -26,6 +26,9 @@ router.post('/excel/upload', authorise(...READ), upload.single('file'), c.excelF
 router.get('/dataset/system', authorise(...READ), c.datasetSystem);
 router.post('/dataset/upload', authorise(...READ), upload.single('file'), c.datasetUpload);
 router.post('/spec/suggest', authorise(...READ), c.specSuggest);
+router.post('/analyze/narrative', authorise(...READ), c.analyzeNarrative);
+// Deterministic statistical analysis — works with NO AI configured.
+router.post('/analyze/auto', express.json({ limit: '30mb' }), authorise(...READ), c.analyzeAuto);
 // Rows can be large (an uploaded dataset the client is previewing) → bigger JSON cap here.
 router.post('/excel/build', express.json({ limit: '30mb' }), authorise(...READ), c.excelBuild);
 

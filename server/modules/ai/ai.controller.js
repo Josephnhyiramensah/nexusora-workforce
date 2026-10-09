@@ -277,8 +277,43 @@ const excelBuild = asyncHandler(async (req, res) => {
   streamWorkbook(res, buffer, clean.title);
 });
 
+// POST /ai/analyze/narrative { title, prompt, kpis, breakdowns, meta } → Claude
+// interprets the EXACT computed figures and returns a structured analysis that
+// the builder shows on screen and the engine embeds as an "AI Insights" sheet.
+const analyzeNarrative = asyncHandler(async (req, res) => {
+  if (!ai.isConfigured()) return res.status(503).json({ message: 'AI is not configured on the server.' });
+  const { title, prompt, kpis, breakdowns, meta } = req.body;
+  const facts = {
+    title: title || '', rows: meta?.rows, currency: meta?.currency,
+    kpis: Array.isArray(kpis) ? kpis.slice(0, 12) : [],
+    breakdowns: Array.isArray(breakdowns) ? breakdowns.slice(0, 8).map((b) => ({ title: b.title, by: b.by, agg: b.agg, series: (b.series || []).slice(0, 25) })) : [],
+  };
+  const system = [
+    'You are a seasoned CHRO and people-analytics advisor. You are given the EXACT computed figures of an HR dashboard (KPIs and breakdown series). Ground EVERY statement in these numbers — never invent figures. Interpret rather than restate: connect metrics to each other, benchmark against what is healthy for an organisation this size, and surface the few things that genuinely matter, including non-obvious risks and opportunities.',
+    'Return STRICT JSON only (no prose outside the JSON): { "headline": string, "summary": string, "findings": [string], "risks": [{"title":string,"detail":string}], "recommendations": [{"action":string,"rationale":string}] }',
+    'Keep it tight and concrete: 3–6 findings, up to 3 risks, 3–5 recommendations — each specific to these figures and actionable this quarter.',
+  ].join('\n');
+  const user = `Dashboard: ${title || 'Workforce Analytics'}\nUser focus: ${prompt || '(none given)'}\nFIGURES (JSON):\n${JSON.stringify(facts)}\n\nWrite the analysis as JSON — analyse, don't just describe.`;
+  const narrative = await ai.completeJSON({ system, messages: [{ role: 'user', content: user }], maxTokens: 2200 });
+  res.json({ narrative });
+});
+
+// POST /ai/analyze/auto { rows?, source?, spec } → DETERMINISTIC statistical
+// analysis in Python (NO AI, no API key). Returns the same narrative shape so
+// the builder and the Excel "AI Insights" sheet work identically offline.
+const analyzeAuto = asyncHandler(async (req, res) => {
+  let rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+  if (!rows.length && req.body.source === 'system') {
+    rows = xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn));
+  }
+  if (!rows.length) return res.status(422).json({ message: 'No data to analyse.' });
+  const spec = { selector: req.body.spec?.selector, currency: req.tenant?.baseCurrency };
+  const out = await xlsxDash.runAnalyze({ rows, spec });
+  res.json({ narrative: out.narrative, stats: out.stats });
+});
+
 module.exports = {
   status, insights, chat, buildDashboard, analyzeUpload,
   excelFromSystem, excelFromUpload,
-  datasetSystem, datasetUpload, specSuggest, excelBuild,
+  datasetSystem, datasetUpload, specSuggest, excelBuild, analyzeNarrative, analyzeAuto,
 };
