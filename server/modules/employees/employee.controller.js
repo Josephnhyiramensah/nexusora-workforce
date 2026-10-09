@@ -2,6 +2,8 @@ const asyncHandler = require('express-async-handler');
 const cloudinary = require('../../config/cloudinary');
 const ExcelJS = require('exceljs');
 const { Readable } = require('stream');
+const ai = require('../../services/ai.service');
+const fieldMap = require('../../services/fieldMapping.service');
 
 /* ------------------------------------------------------------------ *
  *  Effective-dated history helpers.
@@ -407,6 +409,90 @@ const importEmployees = asyncHandler(async (req, res) => {
   res.json({ total: created + errors.length, created, skipped: errors.length, errors: errors.slice(0, 100) });
 });
 
+/* ------------------------------------------------------------------ *
+ *  Bulk import — ANALYSE (dry run) — POST /employees/import/analyze.
+ *  Reads the file, proposes a column→field mapping (deterministic, with
+ *  an optional AI refine for leftovers), and returns a validation preview.
+ *  Writes NOTHING to the database — this is the "understand it first" step.
+ * ------------------------------------------------------------------ */
+async function parseSheet(file) {
+  const wb = new ExcelJS.Workbook();
+  const fname = (file.originalname || '').toLowerCase();
+  if (fname.endsWith('.csv')) await wb.csv.read(Readable.from(file.buffer.toString('utf8')));
+  else await wb.xlsx.load(file.buffer);
+  const ws = wb.worksheets[0];
+  if (!ws) return { headers: [], rows: [] };
+  const headers = [];
+  ws.getRow(1).eachCell((cell, col) => { headers[col - 1] = String(cellText(cell) || '').trim(); });
+  const width = headers.length;
+  const rows = [];
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const row = ws.getRow(r);
+    if (!row || row.actualCellCount === 0) continue;
+    const arr = [];
+    for (let c = 1; c <= width; c++) arr[c - 1] = cellText(row.getCell(c));
+    if (arr.every((v) => v === '' || v == null)) continue;
+    rows.push(arr);
+  }
+  return { headers: headers.map((h) => h || ''), rows };
+}
+
+// Ask the AI to map the columns the deterministic matcher left over. Optional:
+// if AI is off or errors, we simply return nothing and the columns stay unmapped.
+async function aiRefineMapping(unmapped, headers, rows, taken) {
+  if (!ai.isConfigured() || !unmapped.length) return { added: [], used: false };
+  const idx = Object.fromEntries(headers.map((h, i) => [h, i]));
+  const samples = unmapped.slice(0, 25).map((u) => ({
+    header: u.source,
+    samples: rows.slice(0, 6).map((r) => r[idx[u.source]]).filter((v) => v != null && v !== '').map(String).slice(0, 3),
+  }));
+  const fields = fieldMap.catalogueForUI().filter((f) => !taken[f.field]).map((f) => ({ field: f.field, label: f.label, type: f.type }));
+  if (!fields.length) return { added: [], used: false };
+  const system = 'You map messy spreadsheet column headers to a FIXED set of HR employee fields. Return STRICT JSON only: an object {"<header>": "<field key or null>"} using ONLY the provided field keys. Use the sample values as evidence (e.g. values that look like money → a salary/rate field; dates → a date field). Return null for a header that fits none. Never invent field keys.';
+  const user = `FIELD KEYS:\n${JSON.stringify(fields)}\n\nUNMAPPED COLUMNS (with sample values):\n${JSON.stringify(samples)}\n\nReturn the JSON map.`;
+  let out;
+  try { out = await ai.completeJSON({ system, messages: [{ role: 'user', content: user }], maxTokens: 900 }); }
+  catch (e) { return { added: [], used: false }; }
+  const valid = new Set(fields.map((f) => f.field));
+  const added = [];
+  for (const [header, field] of Object.entries(out || {})) {
+    if (!field || !valid.has(field) || taken[field] || !headers.includes(header)) continue;
+    taken[field] = header;
+    const entry = fieldMap.CATALOGUE.find((c) => c.field === field) || {};
+    added.push({ source: header, field, label: entry.label || field, confidence: 'ai', score: null, reason: 'suggested by AI from sample values' });
+  }
+  return { added, used: true };
+}
+
+const importAnalyze = asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'No file uploaded (field name must be "file").' });
+  let parsed;
+  try { parsed = await parseSheet(req.file); }
+  catch (e) { return res.status(400).json({ message: 'Could not read the file. Upload a valid .xlsx or .csv.' }); }
+  const { headers, rows } = parsed;
+  if (!headers.length) return res.status(400).json({ message: 'The file has no header row.' });
+  if (!rows.length) return res.status(400).json({ message: 'The file has a header row but no data rows.' });
+
+  const { mapping, unmapped, byField } = fieldMap.mapColumns(headers);
+  const taken = { ...byField };
+  const { added, used } = await aiRefineMapping(unmapped, headers, rows, taken);
+  const fullMapping = [...mapping, ...added].sort((a, b) => headers.indexOf(a.source) - headers.indexOf(b.source));
+  const stillUnmapped = unmapped.filter((u) => !added.find((a) => a.source === u.source));
+  const preview = fieldMap.buildPreview(headers, rows, fullMapping, { limit: 20 });
+
+  res.json({
+    file: req.file.originalname,
+    rowCount: rows.length,
+    columns: headers,
+    mapping: fullMapping,
+    unmapped: stillUnmapped,
+    aiRefined: used,
+    aiAdded: added.length,
+    catalogue: fieldMap.catalogueForUI(),
+    preview,
+  });
+});
+
 function uploadBuffer(buffer, { folder, resourceType = 'auto' }) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -490,4 +576,4 @@ const uploadPhoto = asyncHandler(async (req, res) => {
   res.json({ message: 'Photo updated', photo: emp.photo });
 });
 
-module.exports = { list, getById, getMe, myTeam, getMyLeave, submitMyLeave, getMyPayslips, getMyAttendance, create, update, history, deactivate, importEmployees, uploadDocument, deleteDocument, uploadPhoto };
+module.exports = { list, getById, getMe, myTeam, getMyLeave, submitMyLeave, getMyPayslips, getMyAttendance, create, update, history, deactivate, importEmployees, importAnalyze, uploadDocument, deleteDocument, uploadPhoto };
