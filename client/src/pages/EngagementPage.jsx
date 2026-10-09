@@ -358,7 +358,35 @@ function Results() {
           </select>
         </Card>
 
-        {data && <SegmentHeatmap segments={data.segments} />}
+        {data && (data.drivers || []).length > 0 && (
+          <Card title="Key drivers" sub="correlation with eNPS">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {data.drivers.map((d) => {
+                const mag = Math.min(1, Math.abs(d.r));
+                const pos = d.r >= 0;
+                return (
+                  <div key={d.questionId} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ flex: '0 0 42%', fontSize: '.82rem', color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.text}>{d.text}</span>
+                    <div style={{ flex: 1, height: 14, background: '#eef2f8', borderRadius: 6, overflow: 'hidden' }}><div style={{ width: `${mag * 100}%`, height: '100%', background: pos ? '#1f9d57' : C.red, borderRadius: 6 }} /></div>
+                    <span style={{ ...NUM, width: 46, textAlign: 'right', fontWeight: 700, color: pos ? '#1f7a4d' : C.red, fontSize: '.82rem' }}>{d.r > 0 ? '+' : ''}{d.r}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        )}
+
+        {data && data.themes && data.themes.keywords.length > 0 && (
+          <Card title="Comment themes" sub={`${data.themes.total} comment(s)`}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {data.themes.keywords.map((k) => {
+                const maxc = data.themes.keywords[0].count || 1;
+                const size = 0.78 + 0.5 * (k.count / maxc);
+                return <span key={k.word} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#eef4ff', border: '1px solid #d5e3fb', color: '#173a6b', borderRadius: 999, padding: '5px 12px', fontSize: `${size}rem`, fontWeight: 700 }}>{k.word}<span style={{ ...NUM, color: C.accentInk, fontSize: '.72rem' }}>{k.count}</span></span>;
+              })}
+            </div>
+          </Card>
+        )}
 
         {data && data.results.questions.map((q) => (
           <Card key={q.questionId} title={q.text} sub={`${q.answered} answered`}>

@@ -104,6 +104,52 @@ function computeResults(survey, responses) {
   return { responseCount: responses.length, questions };
 }
 
+function pearson(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+  const mx = xs.reduce((s, v) => s + v, 0) / n, my = ys.reduce((s, v) => s + v, 0) / n;
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) { const a = xs[i] - mx, b = ys[i] - my; num += a * b; dx += a * a; dy += b * b; }
+  if (dx === 0 || dy === 0) return null;
+  return num / Math.sqrt(dx * dy);
+}
+
+// Which scale question most correlates with the recommend (eNPS) score — the
+// "key drivers" of engagement. Deterministic (Pearson), no AI.
+function computeDrivers(survey, responses) {
+  const npsQ = survey.questions.find((q) => q.kind === 'nps');
+  if (!npsQ) return [];
+  const scaleQs = survey.questions.filter((q) => q.kind === 'scale');
+  const drivers = [];
+  for (const sq of scaleQs) {
+    const xs = [], ys = [];
+    for (const r of responses) {
+      let xv = null, yv = null;
+      for (const a of (r.answers || [])) {
+        if (String(a.questionId) === String(sq._id)) { const v = Number(a.value); if (Number.isFinite(v)) xv = v; }
+        if (String(a.questionId) === String(npsQ._id)) { const v = Number(a.value); if (Number.isFinite(v)) yv = v; }
+      }
+      if (xv != null && yv != null) { xs.push(xv); ys.push(yv); }
+    }
+    if (xs.length >= 5) { const r = pearson(xs, ys); if (r != null) drivers.push({ questionId: String(sq._id), text: sq.text, r: +r.toFixed(2), n: xs.length }); }
+  }
+  drivers.sort((a, b) => Math.abs(b.r) - Math.abs(a.r));
+  return drivers;
+}
+
+const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'to', 'of', 'in', 'on', 'for', 'is', 'are', 'was', 'were', 'be', 'been', 'it', 'its', 'this', 'that', 'i', 'we', 'you', 'they', 'my', 'our', 'with', 'at', 'as', 'so', 'not', 'no', 'have', 'has', 'had', 'do', 'does', 'more', 'less', 'very', 'too', 'just', 'about', 'their', 'them', 'me', 'us', 'from', 'by', 'can', 'will', 'would', 'should', 'there', 'here', 'what', 'when', 'how', 'all', 'some', 'any', 'get', 'got']);
+
+// Free-text themes by keyword frequency (deterministic — the no-AI baseline).
+function computeThemes(survey, responses) {
+  const textIds = new Set(survey.questions.filter((q) => q.kind === 'text').map((q) => String(q._id)));
+  const texts = [];
+  for (const r of responses) for (const a of (r.answers || [])) if (textIds.has(String(a.questionId)) && a.value) texts.push(String(a.value));
+  const freq = {};
+  for (const t of texts) for (const w of t.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)) if (w.length >= 3 && !STOP.has(w)) freq[w] = (freq[w] || 0) + 1;
+  const keywords = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 14).map(([word, count]) => ({ word, count }));
+  return { total: texts.length, keywords };
+}
+
 // GET /engagement/surveys — HR list with response counts + headline score.
 const listSurveys = asyncHandler(async (req, res) => {
   const Survey = req.tenantConn.model('Survey');
@@ -209,6 +255,8 @@ const surveyResults = asyncHandler(async (req, res) => {
     participation: { eligible, responded, rate: eligible ? Math.round((responded / eligible) * 100) : null },
     results: computeResults(s, responses),
     segments: computeSegments(s, responses),
+    drivers: computeDrivers(s, responses),
+    themes: computeThemes(s, responses),
   });
 });
 
