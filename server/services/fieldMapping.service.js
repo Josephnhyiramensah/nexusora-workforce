@@ -232,40 +232,106 @@ function coerceValue(field, raw) {
   return { value: String(raw).trim(), ok: true };
 }
 
-/* ---------------------------- preview build ----------------------------- */
-// rows: array of objects keyed by header, OR array of arrays aligned to headers.
-// mapping: from mapColumns (or an edited one). Returns a sample + summary, with
-// NO database writes. required-field gaps and bad values are surfaced per row.
-function buildPreview(headers, rows, mapping, { limit = 20 } = {}) {
-  const bySource = Object.fromEntries((mapping || []).map((m) => [m.source, m]));
-  const requiredFields = CATALOGUE.filter((c) => c.required).map((c) => c.field);
-  const getCell = (row, header) => (Array.isArray(row) ? row[headers.indexOf(header)] : row[header]);
+/* --------------------------- full-name split ---------------------------- */
+const FULLNAME = '__fullName__';
+const FULLNAME_SYNS = ['full name', 'fullname', 'name', 'employee name', 'staff name', 'full names', 'names'];
 
-  const issueTally = {};
-  let validRows = 0;
-  const sample = [];
-  const fillCount = {};
+// "Mensah, Ama" → first Ama / last Mensah; "Ama Yaa Mensah" → first Ama / last "Yaa Mensah".
+function splitFullName(v) {
+  const s = String(v == null ? '' : v).trim().replace(/\s+/g, ' ');
+  if (!s) return { firstName: '', lastName: '' };
+  if (s.includes(',')) {
+    const [last, first] = s.split(',').map((x) => x.trim());
+    return { firstName: first || '', lastName: last || '' };
+  }
+  const parts = s.split(' ');
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+// Decide whether a single "name" column should be split into first + last.
+// An explicit full-name header (exactly "Name" / "Full Name" / …) wins unless a
+// real first OR last name is mapped from a DIFFERENT column. Otherwise, only when
+// no first/last is mapped at all, fall back to any unmapped name-ish column.
+function detectFullNameColumn(headers, mapping) {
+  const mp = mapping || [];
+  const explicit = (headers || []).find((h) => FULLNAME_SYNS.includes(norm(h)));
+  if (explicit) {
+    const otherFirst = mp.some((m) => m.field === 'firstName' && m.source !== explicit);
+    const otherLast = mp.some((m) => m.field === 'lastName' && m.source !== explicit);
+    return (otherFirst || otherLast) ? null : explicit;
+  }
+  if (mp.some((m) => m.field === 'firstName' || m.field === 'lastName')) return null;
+  const used = new Set(mp.map((m) => m.source));
+  return (headers || []).find((h) => !used.has(h) && norm(h).includes('name') && !norm(h).includes('user') && !norm(h).includes('file')) || null;
+}
+
+// Replace any weak mapping on the chosen name column with a "split into
+// first/last" instruction.
+function augmentFullName(headers, mapping) {
+  const col = detectFullNameColumn(headers, mapping);
+  if (!col) return mapping || [];
+  const cleaned = (mapping || []).filter((m) => m.source !== col);
+  return [...cleaned, { source: col, field: FULLNAME, label: 'Full name → first/last', confidence: 'high', score: null, reason: 'split into first & last name' }];
+}
+
+/* ----------------------- row → Employee document ------------------------ */
+function setPath(obj, path, val) {
+  const keys = path.split('.'); let o = obj;
+  for (let i = 0; i < keys.length - 1; i++) { o[keys[i]] = o[keys[i]] || {}; o = o[keys[i]]; }
+  o[keys[keys.length - 1]] = val;
+}
+
+// Turn one raw row into a nested Employee doc + a flat field map, collecting
+// coercion/validation issues. Shared by the preview AND the commit, so what HR
+// sees is exactly what gets written. required = first + last name present.
+function rowToDoc(headers, row, mapping) {
+  const getCell = (header) => (Array.isArray(row) ? row[headers.indexOf(header)] : row[header]);
+  const doc = {}; const flat = {}; const issues = [];
+  for (const m of (mapping || [])) {
+    const raw = getCell(m.source);
+    if (m.field === FULLNAME) {
+      const { firstName, lastName } = splitFullName(raw);
+      if (firstName) { setPath(doc, 'firstName', firstName); flat.firstName = firstName; }
+      if (lastName) { setPath(doc, 'lastName', lastName); flat.lastName = lastName; }
+      continue;
+    }
+    const { value, ok, issue } = coerceValue(m.field, raw);
+    if (!ok && issue) { issues.push(`${m.label}: ${issue}`); continue; }
+    if (value != null && value !== '') { setPath(doc, m.field, value); flat[m.field] = value; }
+  }
+  const requiredFields = CATALOGUE.filter((c) => c.required).map((c) => c.field);
+  const missingReq = requiredFields.filter((f) => flat[f] == null || flat[f] === '');
+  missingReq.forEach((f) => issues.unshift(`${FIELD_BY_PATH[f].label} is missing (required)`));
+  const valid = missingReq.length === 0;
+  return { doc, flat, issues, valid, staffId: flat.staffId ? String(flat.staffId).trim() : '' };
+}
+
+/* ---------------------------- preview build ----------------------------- */
+// Returns a sample + summary with NO database writes, using rowToDoc so it
+// mirrors the commit exactly (full-name split included).
+function buildPreview(headers, rows, mapping, { limit = 20 } = {}) {
+  const requiredFields = CATALOGUE.filter((c) => c.required).map((c) => c.field);
+  const issueTally = {}; const fillCount = {};
+  let validRows = 0; const sample = [];
   const n = rows.length;
 
   for (let i = 0; i < n; i++) {
-    const row = rows[i];
-    const data = {}; const issues = [];
-    for (const m of (mapping || [])) {
-      const raw = getCell(row, m.source);
-      const { value, ok, issue } = coerceValue(m.field, raw);
-      if (value != null && value !== '') { data[m.field] = value; fillCount[m.field] = (fillCount[m.field] || 0) + 1; }
-      if (!ok && issue) { issues.push(`${m.label}: ${issue}`); issueTally[issue.includes('not a') ? 'bad value' : 'conversion'] = (issueTally['bad value'] || 0) + 1; }
-      else if (issue) { /* a note, not an error */ }
-    }
-    const missingReq = requiredFields.filter((f) => data[f] == null || data[f] === '');
-    if (missingReq.length) { missingReq.forEach((f) => issues.unshift(`${FIELD_BY_PATH[f].label} is missing (required)`)); issueTally['missing required'] = (issueTally['missing required'] || 0) + 1; }
-    const valid = missingReq.length === 0 && issues.every((x) => !x.includes('(required)'));
+    const { flat, issues, valid } = rowToDoc(headers, rows[i], mapping);
+    for (const f of Object.keys(flat)) fillCount[f] = (fillCount[f] || 0) + 1;
     if (valid) validRows++;
-    if (i < limit) sample.push({ row: i + 2, valid, data, issues });  // +2: header is row 1
+    for (const msg of issues) {
+      const key = msg.includes('(required)') ? 'missing required' : (/not a (number|date)/.test(msg) ? 'bad value' : 'unrecognised value');
+      issueTally[key] = (issueTally[key] || 0) + 1;
+    }
+    if (i < limit) sample.push({ row: i + 2, valid, data: flat, issues });  // +2: header is row 1
   }
 
   const fillRate = {};
-  for (const m of (mapping || [])) fillRate[m.field] = n ? Math.round(((fillCount[m.field] || 0) / n) * 100) : 0;
+  for (const m of (mapping || [])) {
+    const f = m.field === FULLNAME ? 'firstName' : m.field;
+    fillRate[m.field] = n ? Math.round(((fillCount[f] || 0) / n) * 100) : 0;
+  }
 
   return {
     summary: { rows: n, validRows, invalidRows: n - validRows, issueTally, mappedFields: (mapping || []).length, requiredFields },
@@ -274,9 +340,37 @@ function buildPreview(headers, rows, mapping, { limit = 20 } = {}) {
   };
 }
 
+/* --------------------------- import planning ---------------------------- */
+// Decide insert / update / skip for already-coerced rows, deduping on staffId.
+// existingStaffIds: a Set of staffIds already in the tenant. Pure — the caller
+// does the actual DB writes. Rows with no staffId are always inserted (no key).
+function planImport(builtRows, existingStaffIds, { updateExisting = false } = {}) {
+  const toInsert = []; const toUpdate = []; const toSkip = []; const rejected = [];
+  const seenInBatch = new Set();
+  for (const r of builtRows) {
+    if (!r.valid) { rejected.push(r); continue; }
+    const sid = r.staffId;
+    if (sid) {
+      const existsInDb = existingStaffIds.has(sid);
+      const dupInBatch = seenInBatch.has(sid);
+      seenInBatch.add(sid);
+      if (existsInDb || dupInBatch) {
+        if (updateExisting && existsInDb && !dupInBatch) toUpdate.push(r);
+        else toSkip.push(r);
+        continue;
+      }
+    }
+    toInsert.push(r);
+  }
+  return { toInsert, toUpdate, toSkip, rejected };
+}
+
 // For the UI: the list of fields a human can map to (for manual override).
 function catalogueForUI() {
   return CATALOGUE.map((c) => ({ field: c.field, label: c.label, type: c.type, required: !!c.required }));
 }
 
-module.exports = { CATALOGUE, mapColumns, coerceValue, buildPreview, catalogueForUI, norm };
+module.exports = {
+  CATALOGUE, mapColumns, coerceValue, buildPreview, catalogueForUI, norm,
+  splitFullName, detectFullNameColumn, augmentFullName, rowToDoc, planImport, FULLNAME,
+};
