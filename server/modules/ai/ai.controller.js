@@ -281,8 +281,21 @@ const excelBuild = asyncHandler(async (req, res) => {
 // interprets the EXACT computed figures and returns a structured analysis that
 // the builder shows on screen and the engine embeds as an "AI Insights" sheet.
 const analyzeNarrative = asyncHandler(async (req, res) => {
-  if (!ai.isConfigured()) return res.status(503).json({ message: 'AI is not configured on the server.' });
-  const { title, prompt, kpis, breakdowns, meta } = req.body;
+  const { title, prompt, kpis, breakdowns, meta, rows, selector, source } = req.body;
+
+  // AI OFF → deterministic Python engine (analyze.py). Same narrative shape, so
+  // the on-screen panel and the Excel "AI Insights" sheet work with or without
+  // Claude. Runs on the exact previewed rows; falls back to live system rows.
+  if (!ai.isConfigured()) {
+    let data = Array.isArray(rows) ? rows : [];
+    if (!data.length && source === 'system') {
+      data = xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn));
+    }
+    if (!data.length) return res.status(422).json({ message: 'No data to analyse.' });
+    const result = await xlsxDash.runAnalyze({ rows: data, spec: { title, selector, currency: meta?.currency } });
+    return res.json({ narrative: result.narrative, stats: result.stats, engine: 'local' });
+  }
+
   const facts = {
     title: title || '', rows: meta?.rows, currency: meta?.currency,
     kpis: Array.isArray(kpis) ? kpis.slice(0, 12) : [],
@@ -295,7 +308,7 @@ const analyzeNarrative = asyncHandler(async (req, res) => {
   ].join('\n');
   const user = `Dashboard: ${title || 'Workforce Analytics'}\nUser focus: ${prompt || '(none given)'}\nFIGURES (JSON):\n${JSON.stringify(facts)}\n\nWrite the analysis as JSON — analyse, don't just describe.`;
   const narrative = await ai.completeJSON({ system, messages: [{ role: 'user', content: user }], maxTokens: 2200 });
-  res.json({ narrative });
+  res.json({ narrative, engine: 'ai' });
 });
 
 module.exports = {

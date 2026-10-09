@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const ai = require('./ai.service');
 
 const SCRIPT = path.join(__dirname, '..', 'python', 'build_dashboard.py');
+const ANALYZE_SCRIPT = path.join(__dirname, '..', 'python', 'analyze.py');
 const PYTHON = process.env.PYTHON_BIN || 'python3';
 const GEN_TIMEOUT_MS = Number(process.env.XLSX_TIMEOUT_MS || 120000);
 
@@ -209,4 +210,35 @@ function generate({ rows, spec }) {
   });
 }
 
-module.exports = { rowsFromEmployees, profileRows, specFromPrompt, sanitizeSpec, generate };
+// Deterministic data-science analysis (analyze.py) — NO AI, no network, no
+// per-call cost. Returns { ok, narrative:{...}, stats:{...} } computed with
+// pandas/numpy. Used as the AI-off fallback for the Analyse action so the
+// builder works identically with or without Claude. Job is passed on stdin.
+function runAnalyze({ rows, spec }) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(PYTHON, [ANALYZE_SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = ''; let stderr = ''; let done = false;
+    const timer = setTimeout(() => { if (!done) { done = true; proc.kill('SIGKILL'); reject(new Error('Analysis timed out.')); } }, GEN_TIMEOUT_MS);
+    proc.stdout.on('data', (d) => { stdout += d; });
+    proc.stderr.on('data', (d) => { stderr += d; });
+    proc.on('error', (e) => {
+      if (done) return; done = true; clearTimeout(timer);
+      reject(new Error(`Could not start the analytics engine with "${PYTHON}". Install Python 3 and its requirements, or set PYTHON_BIN. (${e.message})`));
+    });
+    proc.on('close', (code) => {
+      if (done) return; done = true; clearTimeout(timer);
+      let res = {};
+      try { res = JSON.parse(stdout || '{}'); } catch { /* keep {} */ }
+      if (code !== 0 || !res.ok) return reject(new Error(res.error || friendlyPyError(stderr, code)));
+      resolve(res);
+    });
+    try {
+      proc.stdin.write(JSON.stringify({ spec: spec || {}, data: Array.isArray(rows) ? rows : [] }));
+      proc.stdin.end();
+    } catch (e) {
+      if (!done) { done = true; clearTimeout(timer); reject(new Error('Could not send data to the analytics engine: ' + e.message)); }
+    }
+  });
+}
+
+module.exports = { rowsFromEmployees, profileRows, specFromPrompt, sanitizeSpec, generate, runAnalyze };

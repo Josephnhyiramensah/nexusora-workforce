@@ -387,6 +387,7 @@ function ExcelStudio() {
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [narrBusy, setNarrBusy] = useState(false);
+  const [narrEngine, setNarrEngine] = useState('');
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState('');
   const [done, setDone] = useState('');
@@ -410,8 +411,14 @@ function ExcelStudio() {
     try {
       const kpis = spec.kpis.map((k) => ({ label: k.label, value: kpiValue(frows, k), format: k.format }));
       const breakdowns = spec.breakdowns.map((b) => ({ title: b.title, by: b.by, agg: b.agg, series: breakdownSeries(frows, b) }));
-      const { data } = await api.post('/ai/analyze/narrative', { title: spec.title, prompt: aiPrompt, kpis, breakdowns, meta: { rows: frows.length, currency } });
-      if (data.narrative) setSpec((s) => ({ ...s, narrative: data.narrative }));
+      // Send rows + selector too: if AI is off, the server runs the deterministic
+      // Python engine (analyze.py) on these exact previewed rows — no Claude needed.
+      const { data } = await api.post('/ai/analyze/narrative', {
+        title: spec.title, prompt: aiPrompt, kpis, breakdowns,
+        rows: frows, selector: spec.selector, source,
+        meta: { rows: frows.length, currency },
+      });
+      if (data.narrative) { setSpec((s) => ({ ...s, narrative: data.narrative })); setNarrEngine(data.engine || ''); }
     } catch (e) { setErr(await errMsg(e)); } finally { setNarrBusy(false); }
   }
 
@@ -586,7 +593,8 @@ function ExcelStudio() {
               <div style={{ marginTop: 16, borderTop: `1px solid ${C.line}`, paddingTop: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
                   <Sparkles size={15} color={C.blue} />
-                  <span style={{ fontWeight: 800, color: C.navy, fontSize: '.92rem' }}>{spec.narrative.headline || 'AI Analysis'}</span>
+                  <span style={{ fontWeight: 800, color: C.navy, fontSize: '.92rem' }}>{spec.narrative.headline || 'Analysis'}</span>
+                  {narrEngine && <span style={{ fontSize: '.64rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', color: narrEngine === 'ai' ? C.blue : '#12703f', background: narrEngine === 'ai' ? '#eaf3ff' : '#eafaf0', border: `1px solid ${narrEngine === 'ai' ? '#bcdcff' : '#bfe6cd'}`, borderRadius: 999, padding: '2px 8px' }}>{narrEngine === 'ai' ? 'AI' : 'Local · no AI'}</span>}
                 </div>
                 {spec.narrative.summary && <div style={{ fontSize: '.84rem', color: C.ink, lineHeight: 1.6, marginBottom: 10 }}>{spec.narrative.summary}</div>}
                 {(spec.narrative.findings || []).length > 0 && <NarrBlock title="Key findings" items={spec.narrative.findings.map((f) => ({ t: String(f) }))} />}

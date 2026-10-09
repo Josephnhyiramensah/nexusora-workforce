@@ -331,6 +331,124 @@ def build(job):
         })
         an_row += 2  # spacer
 
+    # ---------- CORRELATION MATRIX sheet ---------- #
+    # Pearson r across numeric columns with enough data and variation. Heat-map
+    # styled so relationships read at a glance. Pairwise-complete (pandas .corr).
+    extra_sheets = []
+    corr_cols = [c for c in df.columns
+                 if _is_number_series(df[c])
+                 and df[c].notna().sum() >= max(3, int(0.3 * nrows))
+                 and float(df[c].std(skipna=True) or 0) > 0]
+    corr_cols = corr_cols[:12]  # keep the matrix legible
+    ws_corr = wb.add_worksheet("Correlation")
+    ws_corr.hide_gridlines(2)
+    ws_corr.write(0, 0, "Correlation matrix (Pearson r)", f_section)
+    if len(corr_cols) >= 2:
+        cm = df[corr_cols].corr(method="pearson")
+        corner = wb.add_format({**base_font, "font_size": 9, "bold": True, "bg_color": "#EEF3FB", "border": 1, "border_color": "#2B4A74"})
+        ws_corr.write(1, 0, "", corner)
+        for j, c in enumerate(corr_cols):
+            ws_corr.write(1, j + 1, c, f_hdr)   # column headers
+            ws_corr.write(j + 2, 0, c, f_hdr)   # row headers
+        f_r = num_format("0.00")
+        for i, ci in enumerate(corr_cols):
+            for j, cj in enumerate(corr_cols):
+                v = cm.iloc[i, j]
+                ws_corr.write_number(i + 2, j + 1, 0.0 if pd.isna(v) else round(float(v), 3), f_r)
+        # Diverging heat-map: red (−1) → white (0) → accent (+1).
+        ws_corr.conditional_format(2, 1, len(corr_cols) + 1, len(corr_cols), {
+            "type": "3_color_scale",
+            "min_type": "num", "min_value": -1, "min_color": "#E5484D",
+            "mid_type": "num", "mid_value": 0, "mid_color": "#FFFFFF",
+            "max_type": "num", "max_value": 1, "max_color": accent,
+        })
+        ws_corr.set_column(0, 0, 18)
+        ws_corr.set_column(1, len(corr_cols), 11)
+        ws_corr.write(len(corr_cols) + 3, 0,
+                      "r ranges −1…+1. Near ±1 = strong linear link; near 0 = weak. Correlation is not causation.", f_note)
+        extra_sheets.append("Correlation")
+    else:
+        ws_corr.write(2, 0, "Not enough numeric columns with variation to compute correlations.", f_note)
+
+    # ---------- PIVOT MATRIX sheet (cross-tab headcount) ---------- #
+    # Row dimension × column dimension headcount, with Top-N capping and totals.
+    def _cat_cols():
+        out = []
+        for c in df.columns:
+            if _is_number_series(df[c]):
+                continue
+            k = df[c].astype(str).replace({"": "Unknown"}).nunique()
+            if 1 < k <= 40:
+                out.append((c, k))
+        return out
+
+    cats = _cat_cols()
+    cat_names = [c for c, _ in cats]
+
+    def _find_cat(keys):
+        for c in cat_names:
+            if any(k in c.lower() for k in keys):
+                return c
+        return None
+
+    sel = spec.get("selector")
+    row_dim = sel if sel in cat_names else (_find_cat(("department", "unit", "division")) or (cat_names[0] if cat_names else None))
+    # Column dim: a *different* categorical, preferably gender; else smallest-cardinality other.
+    col_dim = _find_cat(("gender", "sex"))
+    if col_dim in (None, row_dim):
+        others = sorted([(k, c) for c, k in cats if c != row_dim and k <= 12])
+        col_dim = others[0][1] if others else None
+
+    ws_piv = wb.add_worksheet("Pivot Matrix")
+    ws_piv.hide_gridlines(2)
+    if row_dim and col_dim and row_dim != col_dim:
+        ws_piv.write(0, 0, f"Headcount: {row_dim} × {col_dim}", f_section)
+
+        def _topn(series, n):
+            series = series.astype(str).replace({"": "Unknown"})
+            keep = list(series.value_counts().index[:n])
+            return series.where(series.isin(keep), "Other")
+
+        rseries = _topn(df[row_dim], 24)
+        cseries = _topn(df[col_dim], 11)
+        ct = pd.crosstab(rseries, cseries, margins=True, margins_name="Total")
+        col_labels = list(ct.columns)
+        row_labels = list(ct.index)
+
+        f_corner = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "border": 1, "border_color": "#2B4A74", "align": "left", "valign": "vcenter"})
+        f_tot_hdr = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": "#FFFFFF", "bg_color": accent, "border": 1, "border_color": "#2B4A74", "align": "center", "valign": "vcenter"})
+        f_rowhdr = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": primary, "bg_color": "#EEF3FB", "border": 1, "border_color": "#E3EAF5"})
+        f_tot_cell = wb.add_format({**base_font, "font_size": 10, "bold": True, "num_format": "#,##0", "bg_color": "#F1F6FD", "border": 1, "border_color": "#E3EAF5"})
+        f_count = num_format("#,##0")
+
+        hdr_r = 1
+        ws_piv.write(hdr_r, 0, f"{row_dim} \\ {col_dim}", f_corner)
+        for j, cl in enumerate(col_labels):
+            ws_piv.write(hdr_r, j + 1, str(cl), f_tot_hdr if cl == "Total" else f_hdr)
+        for i, rl in enumerate(row_labels):
+            is_tot_row = (rl == "Total")
+            ws_piv.write(hdr_r + 1 + i, 0, str(rl), f_corner if is_tot_row else f_rowhdr)
+            for j, cl in enumerate(col_labels):
+                val = int(ct.iloc[i, j])
+                fmt = f_tot_cell if (is_tot_row or cl == "Total") else f_count
+                ws_piv.write_number(hdr_r + 1 + i, j + 1, val, fmt)
+        # Light single-hue scale over the inner counts (exclude the Total row/col).
+        inner_rows, inner_cols = len(row_labels) - 1, len(col_labels) - 1
+        if inner_rows >= 1 and inner_cols >= 1:
+            ws_piv.conditional_format(hdr_r + 1, 1, hdr_r + inner_rows, inner_cols, {
+                "type": "2_color_scale",
+                "min_type": "min", "min_color": "#FFFFFF",
+                "max_type": "max", "max_color": accent,
+            })
+        ws_piv.set_column(0, 0, max(16, min(30, len(str(row_dim)) + 10)))
+        ws_piv.set_column(1, len(col_labels), 12)
+        ws_piv.write(hdr_r + len(row_labels) + 2, 0,
+                     "Counts are live from the Data sheet at generation time. Categories beyond the top are grouped as “Other”.", f_note)
+        extra_sheets.append("Pivot Matrix")
+    else:
+        ws_piv.write(0, 0, "Pivot Matrix", f_section)
+        ws_piv.write(2, 0, "Need two categorical columns (e.g. Department and Gender) to build a cross-tab.", f_note)
+
     # ---------- DASHBOARD sheet ---------- #
     ws = wb.add_worksheet("Dashboard")
     ws.hide_gridlines(2)
@@ -487,7 +605,7 @@ def build(job):
     return {
         "ok": True,
         "output": out_path,
-        "sheets": ["Dashboard", "Data", "Analysis"] + (["AI Insights"] if has_narr else []),
+        "sheets": ["Dashboard", "Data", "Analysis"] + extra_sheets + (["AI Insights"] if has_narr else []),
         "rows": int(nrows),
         "charts": charts_added,
         "warnings": warnings,
