@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { exportSections, openPrintable } from '../utils/exporter';
 import { ModuleShell } from '../ui/kit';
 import { applyDerived, filterRows, uniqueValues, kpiValue, breakdownSeries, fmtValue } from '../utils/dashboardCompute';
 import {
@@ -11,42 +10,43 @@ import {
 
 const C = { navy: '#012158', blue: '#3485E9', orange: '#FD9C09', green: '#1f9d57', red: '#e5484d',
   purple: '#7c5cdf', teal: '#17a2b8', ink: '#16233b', muted: '#8a94a6', line: '#e5e8ec', canvas: '#eef1f4', panel: '#f7f9fc' };
-const MODULE = 'Nexusora HR Assistant';
+const MODULE = 'Workforce Intelligence';
+const WRITE_ROLES = ['super_admin', 'hr_manager', 'hr_officer'];
 const PALETTE = ['#012158', '#3485E9', '#FD9C09', '#17a2b8', '#7c5cdf', '#1f9d57', '#e5484d', '#0f766e', '#b45309', '#0369a1'];
 
 /* ============================ ROOT ============================ */
 export default function AIAdvisorPage() {
-  const [section, setSection] = useState('insights');
+  const initial = (() => { try { return new URLSearchParams(window.location.search).get('section') || 'insights'; } catch { return 'insights'; } })();
+  const [section, setSection] = useState(initial);
   const [cfg, setCfg] = useState(null); // { configured, name }
 
   useEffect(() => { let a = true; (async () => { try { const { data } = await api.get('/ai/status'); if (a) setCfg(data); } catch { if (a) setCfg({ configured: false }); } })(); return () => { a = false; }; }, []);
 
   const groups = [
-    { title: 'Advisor', items: [
+    { title: 'Insights', items: [
       { key: 'insights', label: 'Insights', Icon: TrendingUp },
-      { key: 'ask', label: 'Ask HR Advisor', Icon: MessageSquare },
+      { key: 'ask', label: 'Ask HR', Icon: MessageSquare },
     ] },
-    { title: 'Dashboards', items: [
-      { key: 'builder', label: 'Dashboard Builder', Icon: Wand2 },
-      { key: 'upload', label: 'Analyze Upload', Icon: Upload },
-    ] },
-    { title: 'Interactive Excel', items: [
+    { title: 'Build & analyze', items: [
       { key: 'excel', label: 'Dashboard Builder', Icon: Table2 },
+    ] },
+    { title: 'Data', items: [
+      { key: 'import', label: 'Import employees', Icon: Upload },
     ] },
   ];
 
+  // Insights & Ask need the AI; the builder and import run without it.
+  const aiReady = cfg && cfg.configured;
   return (
-    <ModuleShell brand={{ title: 'Nexusora HR Assistant', subtitle: 'Data-grounded AI', Icon: Sparkles }} groups={groups} active={section} onSelect={setSection}>
+    <ModuleShell brand={{ title: 'Workforce Intelligence', subtitle: 'Data-grounded AI', Icon: Sparkles }} groups={groups} active={section} onSelect={setSection}>
       <div style={{ padding: '0 30px 48px', minWidth: 0 }}>
-        {cfg && !cfg.configured && <NotConfigured />}
-        {cfg && cfg.configured && <>
-          {section === 'insights' && <Insights />}
-          {section === 'ask' && <Ask />}
-          {section === 'builder' && <DashboardBuilder />}
-          {section === 'upload' && <AnalyzeUpload />}
-          {section === 'excel' && <ExcelStudio />}
-        </>}
         {!cfg && <div style={{ color: C.muted, padding: 40 }}>Loading…</div>}
+        {cfg && <>
+          {section === 'insights' && (aiReady ? <Insights /> : <NotConfigured />)}
+          {section === 'ask' && (aiReady ? <Ask /> : <NotConfigured />)}
+          {section === 'excel' && <ExcelStudio />}
+          {section === 'import' && <ImportWizard />}
+        </>}
       </div>
     </ModuleShell>
   );
@@ -182,108 +182,7 @@ function Ask() {
   );
 }
 
-/* ============================ DASHBOARD BUILDER ============================ */
-function DashboardBuilder() {
-  const [prompt, setPrompt] = useState('');
-  const [dash, setDash] = useState(null);
-  const [guide, setGuide] = useState('');
-  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
-  const gridRef = useRef(null);
-  async function build() {
-    if (!prompt.trim()) return;
-    setBusy(true); setErr(''); setGuide(''); setDash(null);
-    try {
-      const { data } = await api.post('/ai/dashboard', { prompt });
-      if (data.widgets && data.widgets.length) setDash(data);
-      else setGuide(data.guidance || 'This tool builds dashboards from your workforce data. Try describing the charts you want, e.g. “headcount by department and attrition”.');
-    }
-    catch (e) { setErr(e?.response?.data?.message || 'Could not build the dashboard.'); }
-    finally { setBusy(false); }
-  }
-  const SUGGEST = ['Headcount by department and gender split', 'Attrition and starters vs leavers over the last year', 'Age and tenure distribution of active staff', 'Payroll trend and headcount by grade'];
-  function exportExcel() {
-    if (!dash) return;
-    exportSections({ filename: 'AI_Dashboard.xlsx', title: dash.title, subtitle: `Generated from: "${dash.prompt}"`,
-      sections: dash.widgets.map((w) => ({ heading: w.title, columns: seriesColumns(w), rows: seriesRows(w) })) });
-  }
-  function exportPdf() { if (dash && gridRef.current) openPrintable({ title: dash.title, subtitle: dash.prompt, html: gridRef.current.innerHTML }); }
-  return (
-    <div>
-      <PageHead title="Dashboard Builder" subtitle="" action={dash && <div style={{ display: 'flex', gap: 8 }}><button onClick={exportExcel} style={outBtn()}><Download size={15} /> Excel</button><button onClick={exportPdf} style={outBtn()}><Download size={15} /> PDF</button></div>} />
-      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-        <input value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') build(); }} placeholder="e.g. Show attrition, headcount by department, and gender split" style={{ flex: 1, padding: '12px 14px', border: `1px solid #d8e0ec`, borderRadius: 12, fontSize: '.9rem', color: C.ink }} />
-        <button onClick={build} disabled={busy || !prompt.trim()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 18px', border: 'none', borderRadius: 12, background: C.navy, color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: busy || !prompt.trim() ? 0.6 : 1 }}><Wand2 size={16} /> Build</button>
-      </div>
-      {!dash && !busy && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>{SUGGEST.map((s) => <button key={s} onClick={() => setPrompt(s)} style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 999, padding: '7px 13px', fontSize: '.8rem', color: C.navy, cursor: 'pointer' }}>{s}</button>)}</div>}
-      {err && <ErrBox>{err}</ErrBox>}
-      {guide && <GuideNote onClose={() => setGuide('')}>{guide}</GuideNote>}
-      {busy && <div style={{ color: C.muted, padding: 20 }}>Designing your dashboard…</div>}
-      {dash && <>
-        <div style={{ fontWeight: 800, color: C.navy, fontSize: '1.05rem', marginBottom: 12 }}>{dash.title}</div>
-        <div ref={gridRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
-          {dash.widgets.map((w, i) => <WidgetCard key={i} w={w} />)}
-        </div>
-      </>}
-    </div>
-  );
-}
-
-/* ============================ ANALYZE UPLOAD ============================ */
-function AnalyzeUpload() {
-  const [file, setFile] = useState(null);
-  const [res, setRes] = useState(null);
-  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
-  const gridRef = useRef(null);
-  async function run() {
-    if (!file) return; setBusy(true); setErr(''); setRes(null);
-    try { const fd = new FormData(); fd.append('file', file); const { data } = await api.post('/ai/analyze-upload', fd); setRes(data); }
-    catch (e) { setErr(e?.response?.data?.message || 'Could not analyse that file.'); }
-    finally { setBusy(false); }
-  }
-  function exportExcel() { if (!res) return; exportSections({ filename: 'AI_Analysis.xlsx', title: res.title, subtitle: `${res.file} · ${res.rowCount} rows`, sections: res.widgets.map((w) => ({ heading: w.title, columns: seriesColumns(w), rows: seriesRows(w) })) }); }
-  function exportPdf() { if (res && gridRef.current) openPrintable({ title: res.title, subtitle: `${res.file} · ${res.rowCount} rows`, html: gridRef.current.innerHTML }); }
-  return (
-    <div>
-      <PageHead title="Analyze Upload" subtitle="" action={res && <div style={{ display: 'flex', gap: 8 }}><button onClick={exportExcel} style={outBtn()}><Download size={15} /> Excel</button><button onClick={exportPdf} style={outBtn()}><Download size={15} /> PDF</button></div>} />
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
-        <input type="file" accept=".csv,.xlsx,.xls,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} style={{ fontSize: '.85rem' }} />
-        <button onClick={run} disabled={busy || !file} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 18px', border: 'none', borderRadius: 10, background: C.navy, color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: busy || !file ? 0.6 : 1 }}><Sparkles size={16} /> {busy ? 'Analysing…' : 'Analyze'}</button>
-      </div>
-      {err && <ErrBox>{err}</ErrBox>}
-      {busy && <div style={{ color: C.muted, padding: 20 }}>Reading the data and designing your dashboard…</div>}
-      {res && <>
-        <div style={{ fontWeight: 800, color: C.navy, fontSize: '1.05rem', marginBottom: 4 }}>{res.title}</div>
-        <div style={{ color: C.muted, fontSize: '.8rem', marginBottom: 14 }}>{res.file} · {res.rowCount} rows · {res.columns.length} columns</div>
-        <div ref={gridRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16, marginBottom: 20 }}>
-          {res.widgets.map((w, i) => <WidgetCard key={i} w={w} />)}
-        </div>
-        <Card title="Data preview">
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr>{res.columns.map((c) => <th key={c.name} style={th()}>{c.name}<div style={{ fontWeight: 400, color: C.muted, fontSize: '.62rem', textTransform: 'none' }}>{c.type}</div></th>)}</tr></thead>
-              <tbody>{res.preview.map((r, i) => <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}>{res.columns.map((c) => <td key={c.name} style={td()}>{String(r[c.name] ?? '')}</td>)}</tr>)}</tbody>
-            </table>
-          </div>
-        </Card>
-      </>}
-    </div>
-  );
-}
-
-/* ============================ WIDGET + CHARTS ============================ */
-function WidgetCard({ w }) {
-  return (
-    <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, padding: 16, boxShadow: '0 1px 2px rgba(1,33,88,.05)' }}>
-      <div style={{ fontWeight: 800, color: C.navy, fontSize: '.9rem', marginBottom: 12 }}>{w.title}</div>
-      {(!w.series || w.series.length === 0) ? <div style={{ color: C.muted, fontSize: '.82rem', padding: 12 }}>No data.</div>
-        : w.chart === 'donut' ? <Donut data={w.series} />
-          : w.chart === 'line' ? <LineChart data={w.series} />
-            : w.chart === 'line2' ? <LineChart2 data={w.series} />
-              : w.chart === 'kpi' ? <div style={{ fontSize: '2rem', fontWeight: 800, color: C.navy }}>{w.series[0]?.value}</div>
-                : <BarList data={w.series} />}
-    </div>
-  );
-}
+/* ============================ CHART PRIMITIVES ============================ */
 function BarList({ data }) {
   const max = Math.max(...data.map((d) => d.value), 1);
   return <div>{data.map((d, i) => (
@@ -326,29 +225,6 @@ function LineChart({ data }) {
     </svg>
   );
 }
-function LineChart2({ data }) {
-  const w = 300, h = 130, pad = 24;
-  const max = Math.max(...data.map((d) => Math.max(d.starters || 0, d.leavers || 0)), 1);
-  const line = (key, color) => { const pts = data.map((d, i) => [pad + (i * (w - 2 * pad)) / Math.max(1, data.length - 1), h - pad - (((d[key] || 0) / max) * (h - 2 * pad))]); return <path d={pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')} fill="none" stroke={color} strokeWidth="2.5" />; };
-  return (
-    <div>
-      <svg width="100%" viewBox={`0 0 ${w} ${h}`}>
-        <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke={C.line} />
-        {line('starters', C.green)}{line('leavers', C.red)}
-        {data.map((d, i) => (i % Math.ceil(data.length / 6) === 0) && <text key={i} x={pad + (i * (w - 2 * pad)) / Math.max(1, data.length - 1)} y={h - 8} textAnchor="middle" style={{ fontSize: 8, fill: C.muted }}>{d.label}</text>)}
-      </svg>
-      <div style={{ display: 'flex', gap: 14, fontSize: '.74rem', color: C.ink, marginTop: 4 }}><span><span style={{ display: 'inline-block', width: 9, height: 9, background: C.green, borderRadius: 2, marginRight: 4 }} />Starters</span><span><span style={{ display: 'inline-block', width: 9, height: 9, background: C.red, borderRadius: 2, marginRight: 4 }} />Leavers</span></div>
-    </div>
-  );
-}
-
-// dashboard export helpers — flatten a widget's series into table columns/rows
-function seriesColumns(w) {
-  if (w.chart === 'line2') return [{ label: 'Period', key: 'label', width: 16 }, { label: 'Starters', key: 'starters', width: 12 }, { label: 'Leavers', key: 'leavers', width: 12 }];
-  return [{ label: 'Label', key: 'label', width: 26 }, { label: 'Value', key: 'value', width: 14 }];
-}
-function seriesRows(w) { return w.series || []; }
-
 /* ============================ shared UI ============================ */
 /* ==================== IN-WEB DASHBOARD BUILDER + EXCEL EXPORT ==================== */
 const AGG_OPTS = [['count', 'Count'], ['sum', 'Sum'], ['mean', 'Average'], ['ratio', 'Ratio %'], ['distinct', 'Distinct']];
@@ -641,15 +517,260 @@ function Lbl2({ children }) { return <div style={{ fontSize: '.72rem', color: '#
 
 function Card({ title, children }) { return <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, padding: 16, boxShadow: '0 1px 2px rgba(1,33,88,.05)', marginBottom: 14 }}>{title && <div style={{ fontWeight: 800, color: C.navy, fontSize: '.88rem', marginBottom: 10 }}>{title}</div>}{children}</div>; }
 function ErrBox({ children }) { return <div style={{ background: '#fdecec', border: '1px solid #f6c9cb', color: C.red, padding: '10px 13px', borderRadius: 9, fontSize: '.85rem', marginBottom: 14 }}>{children}</div>; }
-function GuideNote({ children, onClose }) {
-  return (
-    <div style={{ display: 'flex', gap: 12, background: '#eef4ff', border: '1px solid #d5e3fb', borderRadius: 12, padding: '14px 16px', marginBottom: 16 }}>
-      <div style={{ width: 34, height: 34, borderRadius: 9, background: 'linear-gradient(135deg,#012158,#3485E9)', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Sparkles size={17} color="#fff" /></div>
-      <div style={{ flex: 1, color: '#173a6b', fontSize: '.88rem', lineHeight: 1.6 }}>{children}</div>
-      {onClose && <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#173a6b', cursor: 'pointer', fontWeight: 800, fontSize: 16, lineHeight: 1 }}>×</button>}
-    </div>
-  );
-}
 function outBtn() { return { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 14px', border: `1px solid rgba(255,255,255,.9)`, borderRadius: 10, background: 'rgba(255,255,255,.72)', color: C.navy, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' }; }
 function th() { return { textAlign: 'left', padding: '9px 12px', background: '#f4f7fc', color: C.navy, fontWeight: 700, fontSize: '.68rem', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }; }
 function td() { return { padding: '8px 12px', fontSize: '.82rem', color: C.ink, whiteSpace: 'nowrap' }; }
+/* ============================ IMPORT EMPLOYEES (wizard) ============================ */
+function ImportWizard() {
+  const { user } = useAuth();
+  const canImport = WRITE_ROLES.includes(user?.role);
+  const [step, setStep] = useState('upload');        // upload | review | done
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [an, setAn] = useState(null);                // /import/analyze result
+  const [map, setMap] = useState([]);                // editable [{source, field}]
+  const [updateExisting, setUpdateExisting] = useState(false);
+  const [report, setReport] = useState(null);
+  const [fixRows, setFixRows] = useState([]);        // editable rejected rows
+  const [fixBusy, setFixBusy] = useState(false);
+
+  const catalogue = an?.catalogue || [];
+  const fieldOptions = useMemo(() => ([
+    ['', '— skip —'],
+    ['__fullName__', 'Full name → split'],
+    ...catalogue.map((c) => [c.field, c.label + (c.required ? ' *' : '')]),
+  ]), [catalogue]);
+  const fieldOf = (source) => (map.find((m) => m.source === source)?.field) || '';
+  const setFieldFor = (source, field) => setMap((prev) => {
+    const others = prev.filter((m) => m.source !== source);
+    return field ? [...others, { source, field }] : others;
+  });
+
+  async function analyze() {
+    if (!file) { setErr('Choose a .xlsx or .csv file first.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const { data } = await api.post('/employees/import/analyze', fd);
+      setAn(data);
+      setMap((data.mapping || []).map((m) => ({ source: m.source, field: m.field })));
+      setStep('review');
+    } catch (e) { setErr(e?.response?.data?.message || 'Could not read that file.'); }
+    finally { setBusy(false); }
+  }
+
+  async function commit() {
+    setBusy(true); setErr('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('mapping', JSON.stringify(map));
+      fd.append('updateExisting', String(updateExisting));
+      const { data } = await api.post('/employees/import/commit', fd);
+      setReport(data);
+      setFixRows((data.rejectedRows || []).map((r) => ({ ...r.data, row: r.row, _issues: r.issues || [] })));
+      setStep('done');
+    } catch (e) { setErr(e?.response?.data?.message || 'Import failed.'); }
+    finally { setBusy(false); }
+  }
+
+  async function reimportFixed() {
+    const rows = fixRows.map((r) => { const o = { ...r }; delete o._issues; return o; });
+    setFixBusy(true); setErr('');
+    try {
+      const fd = new FormData();
+      fd.append('rows', JSON.stringify(rows));
+      fd.append('updateExisting', String(updateExisting));
+      const { data } = await api.post('/employees/import/commit', fd);
+      setReport((prev) => ({ ...prev,
+        inserted: (prev.inserted || 0) + (data.inserted || 0),
+        updated: (prev.updated || 0) + (data.updated || 0),
+        skipped: (prev.skipped || 0) + (data.skipped || 0),
+        rejected: data.rejected || 0 }));
+      setFixRows((data.rejectedRows || []).map((r) => ({ ...r.data, row: r.row, _issues: r.issues || [] })));
+    } catch (e) { setErr(e?.response?.data?.message || 'Re-import failed.'); }
+    finally { setFixBusy(false); }
+  }
+
+  function reset() { setStep('upload'); setFile(null); setAn(null); setMap([]); setReport(null); setFixRows([]); setErr(''); }
+
+  if (!canImport) {
+    return <div><PageHead title="Import employees" subtitle="" />
+      <Card><div style={{ color: C.muted, fontSize: '.88rem' }}>You don’t have permission to import employees. Ask an HR manager or administrator.</div></Card></div>;
+  }
+
+  const confColor = (c) => c === 'high' ? C.green : (c === 'medium' ? C.orange : (c === 'ai' ? C.purple : C.muted));
+  const fixCols = (() => {
+    const base = ['staffId', 'firstName', 'lastName'];
+    const extra = [];
+    fixRows.forEach((r) => Object.keys(r).forEach((k) => { if (!base.includes(k) && k !== 'row' && k !== '_issues' && !extra.includes(k)) extra.push(k); }));
+    return [...base, ...extra].slice(0, 8);
+  })();
+
+  return (
+    <div>
+      <PageHead title="Import employees" subtitle="" />
+      <Stepper step={step} />
+      {err && <ErrBox>{err}</ErrBox>}
+
+      {step === 'upload' && (
+        <Card>
+          <div style={{ fontSize: '.9rem', color: C.ink, lineHeight: 1.6, marginBottom: 14 }}>
+            Upload your existing employee list — <strong>any column names</strong>. We match them to your fields automatically
+            (Staff ID, names, department, salary, dates…), you review and fix anything, and <strong>nothing is saved until you confirm</strong>.
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => { setFile(e.target.files?.[0] || null); setErr(''); }} style={{ fontSize: '.85rem' }} />
+            <button onClick={analyze} disabled={busy || !file} style={primaryBtnStyle(busy || !file, true)}>
+              {busy ? <RefreshCw size={15} /> : <Sparkles size={15} />} {busy ? 'Reading…' : 'Analyze file'}
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {step === 'review' && an && (
+        <>
+          <div style={{ fontSize: '.8rem', color: C.muted, marginBottom: 12 }}>
+            <strong style={{ color: C.navy }}>{an.file}</strong> · {an.rowCount} rows · {an.columns.length} columns
+            {an.aiRefined ? <span style={{ marginLeft: 8, color: C.purple, fontWeight: 700 }}>· AI helped map {an.aiAdded}</span> : null}
+          </div>
+
+          <Card title="Column mapping — review & adjust">
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={th()}>Your column</th><th style={th()}>Maps to</th><th style={th()}>Match</th><th style={th()}>Why</th></tr></thead>
+                <tbody>
+                  {an.columns.map((col) => {
+                    const orig = (an.mapping || []).find((m) => m.source === col);
+                    return (
+                      <tr key={col} style={{ borderTop: `1px solid ${C.line}` }}>
+                        <td style={td()}><strong>{col}</strong></td>
+                        <td style={td()}>
+                          <select value={fieldOf(col)} onChange={(e) => setFieldFor(col, e.target.value)} style={{ ...inpXs, minWidth: 180 }}>
+                            {fieldOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                          </select>
+                        </td>
+                        <td style={td()}>{orig && <span style={{ fontSize: '.68rem', fontWeight: 700, textTransform: 'uppercase', color: '#fff', background: confColor(orig.confidence), borderRadius: 999, padding: '2px 8px' }}>{orig.confidence}</span>}</td>
+                        <td style={{ ...td(), color: C.muted, whiteSpace: 'normal' }}>{orig ? orig.reason : '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: '.72rem', color: C.muted, marginTop: 8 }}>Required: <strong>First name</strong> and <strong>Last name</strong> (a single “Name” column is split automatically). Your edits here apply when you import.</div>
+          </Card>
+
+          <Card title="Validation preview">
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+              <Stat label="Rows" value={an.preview.summary.rows} color={C.navy} />
+              <Stat label="Ready" value={an.preview.summary.validRows} color={C.green} />
+              <Stat label="Need a fix" value={an.preview.summary.invalidRows} color={an.preview.summary.invalidRows ? C.red : C.muted} />
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={th()}>Row</th><th style={th()}></th><th style={th()}>Name</th><th style={th()}>Staff ID</th><th style={th()}>Issues</th></tr></thead>
+                <tbody>
+                  {an.preview.sample.map((r) => (
+                    <tr key={r.row} style={{ borderTop: `1px solid ${C.line}`, background: r.valid ? 'transparent' : '#fff7f7' }}>
+                      <td style={td()}>{r.row}</td>
+                      <td style={td()}><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 999, background: r.valid ? C.green : C.red }} /></td>
+                      <td style={td()}>{[r.data.firstName, r.data.lastName].filter(Boolean).join(' ') || '—'}</td>
+                      <td style={td()}>{r.data.staffId || '—'}</td>
+                      <td style={{ ...td(), color: C.red, whiteSpace: 'normal' }}>{(r.issues || []).join('; ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 9, margin: '4px 2px 14px', fontSize: '.86rem', color: C.ink, cursor: 'pointer' }}>
+            <input type="checkbox" checked={updateExisting} onChange={(e) => setUpdateExisting(e.target.checked)} />
+            Update existing employees when the <strong>Staff ID</strong> already exists (otherwise they’re skipped)
+          </label>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={reset} style={{ ...primaryBtnStyle(false, true), background: '#fff', color: C.navy, border: `1px solid ${C.line}` }}>Back</button>
+            <button onClick={commit} disabled={busy} style={primaryBtnStyle(busy, false)}>
+              {busy ? <RefreshCw size={16} /> : <Database size={16} />} {busy ? 'Importing…' : `Import ${an.preview.summary.validRows} employee(s)`}
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === 'done' && report && (
+        <>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+            <Stat label="Inserted" value={report.inserted || 0} color={C.green} />
+            <Stat label="Updated" value={report.updated || 0} color={C.blue} />
+            <Stat label="Skipped" value={report.skipped || 0} color={C.muted} />
+            <Stat label="Rejected" value={report.rejected || 0} color={report.rejected ? C.red : C.muted} />
+          </div>
+
+          {fixRows.length > 0 ? (
+            <Card title={`Fix ${fixRows.length} rejected row(s) and re-import`}>
+              <div style={{ fontSize: '.78rem', color: C.muted, marginBottom: 10 }}>Edit the cells below (a missing last name is the usual cause), then re-import just these rows.</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={th()}>Row</th>{fixCols.map((c) => <th key={c} style={th()}>{c}</th>)}<th style={th()}>Issues</th></tr></thead>
+                  <tbody>
+                    {fixRows.map((r, ri) => (
+                      <tr key={ri} style={{ borderTop: `1px solid ${C.line}` }}>
+                        <td style={td()}>{r.row}</td>
+                        {fixCols.map((c) => (
+                          <td key={c} style={{ padding: '4px 6px' }}>
+                            <input value={r[c] ?? ''} onChange={(e) => setFixRows((prev) => prev.map((x, i) => i === ri ? { ...x, [c]: e.target.value } : x))} style={{ ...inpXs, width: 120 }} />
+                          </td>
+                        ))}
+                        <td style={{ ...td(), color: C.red, whiteSpace: 'normal' }}>{(r._issues || []).join('; ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <button onClick={reimportFixed} disabled={fixBusy} style={primaryBtnStyle(fixBusy, true)}>
+                  {fixBusy ? <RefreshCw size={15} /> : <Database size={15} />} {fixBusy ? 'Re-importing…' : 'Re-import fixed rows'}
+                </button>
+              </div>
+            </Card>
+          ) : (
+            <Card><div style={{ color: C.green, fontWeight: 700 }}>All rows imported. Nothing left to fix.</div></Card>
+          )}
+
+          <button onClick={reset} style={{ ...primaryBtnStyle(false, true), background: '#fff', color: C.navy, border: `1px solid ${C.line}` }}>
+            <Upload size={15} /> Import another file
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Stepper({ step }) {
+  const steps = [['upload', 'Upload'], ['review', 'Review'], ['done', 'Import']];
+  const idx = steps.findIndex(([k]) => k === step);
+  return (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      {steps.map(([k, label], i) => (
+        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 22, height: 22, borderRadius: 999, display: 'grid', placeItems: 'center', fontSize: '.72rem', fontWeight: 800,
+            background: i <= idx ? C.navy : '#e7ecf3', color: i <= idx ? '#fff' : C.muted }}>{i + 1}</span>
+          <span style={{ fontSize: '.82rem', fontWeight: 700, color: i <= idx ? C.navy : C.muted }}>{label}</span>
+          {i < steps.length - 1 && <span style={{ width: 24, height: 2, background: i < idx ? C.navy : '#e7ecf3' }} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Stat({ label, value, color }) {
+  return (
+    <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 12, padding: '12px 16px', minWidth: 110 }}>
+      <div style={{ fontSize: '.64rem', fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
+      <div style={{ fontSize: '1.5rem', fontWeight: 800, color: color || C.navy, marginTop: 2 }}>{Number(value).toLocaleString()}</div>
+    </div>
+  );
+}

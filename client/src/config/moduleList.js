@@ -31,7 +31,7 @@ export const MODULE_GROUPS = [
     { key:'analytics', label:'Analytics', labelKey:'home.tile.analytics', to:'/analytics', Icon:BarChart3, accent:'#168eff', live:true },
     { key:'documents', label:'Documents', labelKey:'home.tile.documents', to:'/documents', Icon:FileText, accent:'#0b6fd6', live:true },
     { key:'planning', label:'Workforce Planning', labelKey:'home.tile.planning', to:'/workforce-planning', Icon:Gauge, accent:'#17a2b8', live:true },
-    { key:'ai', label:'AI Advisor', labelKey:'home.tile.ai', to:'/ai-advisor', Icon:Sparkles, accent:'#7c5cdf', live:true },
+    { key:'ai', label:'Workforce Intelligence', labelKey:'home.tile.ai', to:'/ai-advisor', Icon:Sparkles, accent:'#7c5cdf', live:true },
     { key:'settings', label:'Settings', labelKey:'home.tile.settings', to:'/settings', Icon:Settings, accent:'#67728a', live:true },
   ]},
 ];

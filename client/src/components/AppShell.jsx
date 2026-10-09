@@ -49,7 +49,7 @@ const MODULES = [
     { label: 'Analytics', to: '/analytics', Icon: BarChart3, accent: '#168eff' },
     { label: 'Documents', to: '/documents', Icon: FileText, accent: '#0b6fd6' },
     { label: 'Workforce Planning', to: '/workforce-planning', Icon: Gauge, accent: '#17a2b8' },
-    { label: 'AI Advisor', to: '/ai-advisor', Icon: Sparkles, accent: '#7c5cdf' },
+    { label: 'Workforce Intelligence', to: '/ai-advisor', Icon: Sparkles, accent: '#7c5cdf' },
   ] },
 ];
 

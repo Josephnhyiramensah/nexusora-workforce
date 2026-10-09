@@ -11,10 +11,10 @@ import {
 } from 'lucide-react';
 import {
   RouteShell, Hero, KpiBand, Kpi, Body, Card, EmpCell, Pill, Empty,
-  Overlay, HeroBtn, TableWrap,
+  HeroBtn, TableWrap,
 } from '../ui/kit';
 import {
-  C, NUM, cap, fullName, primaryBtn, ghostBtn, rowStyle, td,
+  C, NUM, cap, fullName, ghostBtn, rowStyle, td,
 } from '../ui/tokens';
 
 const WRITE_ROLES = ['super_admin', 'hr_manager', 'hr_officer'];
@@ -59,7 +59,6 @@ export default function EmployeesPage() {
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [importOpen, setImportOpen] = useState(false);
 
   // Picklist name maps (worker class / employment type), corrected like the profile page.
   const [wcMap, setWcMap] = useState({});
@@ -138,7 +137,7 @@ export default function EmployeesPage() {
         subtitle={t('employees.heroSub')}
         actions={<>
           {list.length > 0 && <HeroBtn ghost Icon={Upload} onClick={exportDirectory}>{t('common.export')}</HeroBtn>}
-          {canWrite && <HeroBtn ghost Icon={Upload} onClick={() => setImportOpen(true)}>{t('common.import')}</HeroBtn>}
+          {canWrite && <HeroBtn ghost Icon={Upload} onClick={() => navigate('/ai-advisor?section=import')}>{t('common.import')}</HeroBtn>}
           {canWrite && <HeroBtn Icon={UserPlus} onClick={() => { setEditing(null); setFormOpen(true); }}>{t('employees.add')}</HeroBtn>}
         </>} />
 
@@ -188,72 +187,6 @@ export default function EmployeesPage() {
       </Body>
 
       {formOpen && <EmployeeForm employee={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSaved={onSaved} />}
-      {importOpen && <ImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); refreshAll(); }} />}
     </RouteShell>
-  );
-}
-
-/* ---------- Bulk import modal (kit-styled) ---------- */
-function ImportModal({ onClose, onDone }) {
-  const { t } = useLocale();
-  const [file, setFile] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
-
-  // NOTE: these column names must match the backend import parser — keep them in English.
-  const COLUMNS = [
-    'First Name', 'Last Name', 'Staff ID', 'Gender', 'Date of Birth', 'National ID',
-    'Email', 'Phone', 'Address', 'Job Title', 'Department', 'Section', 'Worker Class',
-    'Employment Type', 'Grade', 'Start Date', 'Pay Basis', 'Currency', 'Base Salary',
-    'Daily Rate', 'Hourly Rate',
-  ];
-
-  const downloadTemplate = () => {
-    const csv = COLUMNS.join(',') + '\n';
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'employee-import-template.csv';
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const submit = async () => {
-    if (!file) { setError(t('employees.import_choose')); return; }
-    setBusy(true); setError(''); setResult(null);
-    try { const fd = new FormData(); fd.append('file', file); const { data } = await api.post('/employees/import', fd); setResult(data); }
-    catch (e) { setError(e?.response?.data?.message || t('employees.import_failed')); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <Overlay onClose={onClose} title={t('employees.import_title')} width={560}>
-      <p style={{ fontSize: '.85rem', color: C.muted, marginTop: 0, lineHeight: 1.55 }}>
-        {t('employees.import_desc_pre')}<strong>First Name</strong>{t('employees.import_desc_and')}<strong>Last Name</strong>{t('employees.import_desc_post')}
-      </p>
-      {error && <div style={{ background: C.redBg, border: '1px solid #f6c9cb', color: C.red, padding: '9px 12px', borderRadius: 9, fontSize: '.84rem', marginBottom: 12 }}>{error}</div>}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', margin: '14px 0' }}>
-        <button onClick={downloadTemplate} style={{ ...ghostBtn, padding: '9px 14px', fontSize: '.83rem' }}>{t('employees.import_template')}</button>
-        <input type="file" accept=".xlsx,.csv" onChange={(e) => { setFile(e.target.files?.[0] || null); setResult(null); }} style={{ fontSize: '.83rem' }} />
-      </div>
-      {result && (
-        <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14, marginTop: 4 }}>
-          <div style={{ fontWeight: 800, color: C.navy }}>{t('employees.import_result', { created: result.created, total: result.total })}</div>
-          {result.skipped > 0 && <div style={{ color: C.amber, marginTop: 4, fontSize: '.86rem' }}>{t('employees.import_skipped', { n: result.skipped })}</div>}
-          {result.errors?.length > 0 && (
-            <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: '.82rem', color: C.muted, maxHeight: 160, overflow: 'auto' }}>
-              {result.errors.map((er, i) => (<li key={i}>{t('employees.import_rowerr', { row: er.row, error: er.error })}</li>))}
-            </ul>
-          )}
-        </div>
-      )}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
-        <button onClick={onClose} style={ghostBtn}>{t('common.close')}</button>
-        {result
-          ? <button onClick={onDone} style={primaryBtn}>{t('employees.import_done')}</button>
-          : <button onClick={submit} disabled={busy || !file} style={{ ...primaryBtn, opacity: busy || !file ? 0.6 : 1 }}>{busy ? t('employees.import_busy') : t('common.import')}</button>}
-      </div>
-    </Overlay>
   );
 }
