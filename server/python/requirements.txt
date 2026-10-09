@@ -9,3 +9,11 @@ pandas>=2.0
 numpy>=1.24
 XlsxWriter>=3.1
 openpyxl>=3.1
+# Data Scientist sandbox (Workforce Intelligence): Claude-written analysis runs
+# in server/python/sandbox_runner.py. These power regression/clustering, stats
+# tests and chart rendering. The sandbox degrades gracefully if any are absent
+# (that capability is simply skipped), so they are recommended, not mandatory.
+scikit-learn>=1.3
+scipy>=1.10
+statsmodels>=0.14
+matplotlib>=3.7

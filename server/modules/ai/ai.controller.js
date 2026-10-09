@@ -4,6 +4,7 @@ const ai = require('../../services/ai.service');
 const { METRICS, metricCatalogue, computeMetric, contextPack, loadEmployees } = require('../../services/aiMetrics');
 const { identityPrompt, COMPANY } = require('../../config/company');
 const xlsxDash = require('../../services/excelDashboard.service');
+const dataScientist = require('../../services/dataScientist.service');
 
 /* ============================ STATUS ============================ */
 // GET /ai/status — lets the UI show a clear "not configured" state instead of failing.
@@ -311,8 +312,42 @@ const analyzeNarrative = asyncHandler(async (req, res) => {
   res.json({ narrative, engine: 'ai' });
 });
 
+/* ===================== DATA SCIENTIST (sandboxed) ===================== */
+// Claude writes Python analysis code; it runs in the locked sandbox against the
+// real rows. Numbers are computed, never invented. AI-only (503 when off).
+const dataScience = asyncHandler(async (req, res) => {
+  if (!ai.isConfigured()) return res.status(503).json({ message: 'Workforce Intelligence AI is not configured on the server.' });
+  const { question, source } = req.body || {};
+  let rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  if (!rows.length || source === 'system') {
+    rows = xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn));
+  }
+  if (!rows.length) return res.status(422).json({ message: 'No employee data to analyse yet.' });
+  try {
+    const out = await dataScientist.analyse({ question, rows });
+    return res.json(out);
+  } catch (e) {
+    return res.status(e.status || 500).json({ message: e.message || 'Analysis failed.' });
+  }
+});
+
+// Same, but over an uploaded CSV/Excel file instead of system rows.
+const dataScienceUpload = asyncHandler(async (req, res) => {
+  if (!ai.isConfigured()) return res.status(503).json({ message: 'Workforce Intelligence AI is not configured on the server.' });
+  if (!req.file) return res.status(400).json({ message: 'Upload a CSV or Excel file (field "file").' });
+  const { headers, rows } = await parseUpload(req.file);
+  if (!headers.length || !rows.length) return res.status(422).json({ message: 'Could not read any rows from that file.' });
+  try {
+    const out = await dataScientist.analyse({ question: req.body?.question, rows });
+    return res.json(out);
+  } catch (e) {
+    return res.status(e.status || 500).json({ message: e.message || 'Analysis failed.' });
+  }
+});
+
 module.exports = {
   status, insights, chat, buildDashboard, analyzeUpload,
   excelFromSystem, excelFromUpload,
   datasetSystem, datasetUpload, specSuggest, excelBuild, analyzeNarrative,
+  dataScience, dataScienceUpload,
 };

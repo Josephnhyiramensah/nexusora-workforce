@@ -30,4 +30,8 @@ router.post('/analyze/narrative', authorise(...READ), c.analyzeNarrative);
 // Rows can be large (an uploaded dataset the client is previewing) → bigger JSON cap here.
 router.post('/excel/build', express.json({ limit: '30mb' }), authorise(...READ), c.excelBuild);
 
+// Data scientist — Claude writes analysis code, runs it in the locked sandbox.
+router.post('/data-science', express.json({ limit: '30mb' }), authorise(...READ), c.dataScience);
+router.post('/data-science/upload', authorise(...READ), upload.single('file'), c.dataScienceUpload);
+
 module.exports = router;

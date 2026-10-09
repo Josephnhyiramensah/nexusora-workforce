@@ -6,6 +6,7 @@ import { applyDerived, filterRows, uniqueValues, kpiValue, breakdownSeries, fmtV
 import {
   Sparkles, MessageSquare, Wand2, Upload, Send, RefreshCw,
   Download, TrendingUp, ShieldAlert, Lightbulb, Plus, Trash2, Filter, Database, Table2,
+  FlaskConical, Code2, ChevronDown,
 } from 'lucide-react';
 
 const C = { navy: '#012158', blue: '#3485E9', orange: '#FD9C09', green: '#1f9d57', red: '#e5484d',
@@ -29,6 +30,7 @@ export default function AIAdvisorPage() {
     ] },
     { title: 'Build & analyze', items: [
       { key: 'excel', label: 'Dashboard Builder', Icon: Table2 },
+      { key: 'science', label: 'Data Scientist', Icon: FlaskConical },
     ] },
     { title: 'Data', items: [
       { key: 'import', label: 'Import employees', Icon: Upload },
@@ -45,6 +47,7 @@ export default function AIAdvisorPage() {
           {section === 'insights' && (aiReady ? <Insights /> : <NotConfigured />)}
           {section === 'ask' && (aiReady ? <Ask /> : <NotConfigured />)}
           {section === 'excel' && <ExcelStudio />}
+          {section === 'science' && (aiReady ? <DataScientist /> : <NotConfigured />)}
           {section === 'import' && <ImportWizard />}
         </>}
       </div>
@@ -180,6 +183,173 @@ function Ask() {
       </div>
     </div>
   );
+}
+
+/* ============================ DATA SCIENTIST ============================ */
+const DS_SUGGEST = [
+  'Which departments are overpaying relative to tenure?',
+  'Is there a gender pay gap after controlling for grade?',
+  'Model what predicts attrition and rank the drivers',
+  'Cluster employees into pay-and-tenure segments',
+];
+
+function DataScientist() {
+  const [question, setQuestion] = useState('');
+  const [source, setSource] = useState('system'); // 'system' | 'upload'
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [out, setOut] = useState(null);
+  const [err, setErr] = useState('');
+  const [showCode, setShowCode] = useState(false);
+
+  async function run() {
+    const q = question.trim();
+    if (!q || busy) return;
+    if (source === 'upload' && !file) { setErr('Choose a CSV or Excel file to analyse.'); return; }
+    setBusy(true); setErr(''); setOut(null); setShowCode(false);
+    try {
+      let data;
+      if (source === 'upload') {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('question', q);
+        ({ data } = await api.post('/ai/data-science/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } }));
+      } else {
+        ({ data } = await api.post('/ai/data-science', { question: q, source: 'system' }));
+      }
+      setOut(data);
+      if (!data.ok && data.error) setErr(data.error);
+    } catch (e) {
+      setErr(e?.response?.data?.message || 'The analysis could not be completed.');
+    } finally { setBusy(false); }
+  }
+
+  const result = out?.result || {};
+  const hasResult = result && Object.keys(result).length > 0;
+
+  return (
+    <div>
+      <PageHead title="Data Scientist" subtitle="" />
+      <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, padding: 16, marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <SrcTab active={source === 'system'} onClick={() => setSource('system')} Icon={Database} label="Company data" />
+          <SrcTab active={source === 'upload'} onClick={() => setSource('upload')} Icon={Upload} label="Upload a file" />
+        </div>
+        {source === 'upload' && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: `1px dashed #c6d2e4`, borderRadius: 10, marginBottom: 12, cursor: 'pointer', color: C.ink, fontSize: '.85rem' }}>
+            <Upload size={15} color={C.blue} />
+            <span>{file ? file.name : 'Choose CSV or Excel'}</span>
+            <input type="file" accept=".csv,.txt,.xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] || null)} style={{ display: 'none' }} />
+          </label>
+        )}
+        <textarea
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run(); }}
+          rows={2}
+          placeholder="Ask an analytical question about your workforce…"
+          style={{ width: '100%', boxSizing: 'border-box', padding: '12px 14px', border: `1px solid #d8e0ec`, borderRadius: 12, fontSize: '.9rem', color: C.ink, resize: 'vertical', fontFamily: 'inherit' }}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {DS_SUGGEST.map((s) => <button key={s} onClick={() => setQuestion(s)} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 999, padding: '6px 11px', fontSize: '.76rem', color: C.navy, cursor: 'pointer' }}>{s}</button>)}
+          </div>
+          <button onClick={run} disabled={busy || !question.trim()} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '10px 18px', border: 'none', borderRadius: 12, background: C.navy, color: '#fff', fontWeight: 700, fontSize: '.85rem', cursor: 'pointer', opacity: busy || !question.trim() ? 0.6 : 1 }}>
+            <FlaskConical size={16} /> {busy ? 'Analysing…' : 'Analyse'}
+          </button>
+        </div>
+      </div>
+
+      {err && <ErrBox>{err}</ErrBox>}
+      {busy && <div style={{ color: C.muted, padding: '18px 2px', fontSize: '.88rem' }}>Writing and running the analysis on your data…</div>}
+
+      {out && out.ok && (
+        <div>
+          {out.narrative && (
+            <div style={{ background: 'linear-gradient(135deg,#012158,#0c2f6b)', color: '#fff', borderRadius: 14, padding: 20, marginBottom: 16, whiteSpace: 'pre-wrap', fontSize: '.9rem', lineHeight: 1.65 }}>{out.narrative}</div>
+          )}
+          {hasResult && <ResultView result={result} />}
+          {(out.charts || []).length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14, marginTop: 4 }}>
+              {out.charts.map((c, i) => (
+                <div key={i} style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, padding: 12 }}>
+                  <img alt={`Chart ${i + 1}`} src={`data:image/png;base64,${c}`} style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 8 }} />
+                </div>
+              ))}
+            </div>
+          )}
+          {out.code && (
+            <div style={{ marginTop: 16 }}>
+              <button onClick={() => setShowCode((v) => !v)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 13px', fontSize: '.8rem', fontWeight: 700, color: C.navy, cursor: 'pointer' }}>
+                <Code2 size={15} /> {showCode ? 'Hide analysis code' : 'View analysis code'} <ChevronDown size={14} style={{ transform: showCode ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+              </button>
+              {showCode && (
+                <pre style={{ marginTop: 10, background: '#0c1627', color: '#dbe7ff', borderRadius: 12, padding: 16, overflowX: 'auto', fontSize: '.78rem', lineHeight: 1.55, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{out.code}</pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Render an arbitrary result dict: scalars as KPI tiles, structured values as
+// tables or labelled blocks. Numbers are already computed server-side.
+function ResultView({ result }) {
+  const entries = Object.entries(result);
+  const scalars = entries.filter(([, v]) => v == null || typeof v !== 'object');
+  const complex = entries.filter(([, v]) => v && typeof v === 'object');
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {scalars.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 12, marginBottom: complex.length ? 14 : 0 }}>
+          {scalars.map(([k, v]) => <MiniKpi key={k} label={prettyKey(k)} value={fmtScalar(v)} />)}
+        </div>
+      )}
+      {complex.map(([k, v]) => (
+        <Card key={k} title={prettyKey(k)}><ValueBlock value={v} /></Card>
+      ))}
+    </div>
+  );
+}
+
+function ValueBlock({ value }) {
+  // Object of scalars → two-column table. Array of objects → a grid table.
+  if (Array.isArray(value)) {
+    if (value.length && value.every((r) => r && typeof r === 'object' && !Array.isArray(r))) {
+      const cols = Array.from(value.reduce((s, r) => { Object.keys(r).forEach((k) => s.add(k)); return s; }, new Set()));
+      return (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '.82rem' }}>
+            <thead><tr>{cols.map((c) => <th key={c} style={thCell}>{prettyKey(c)}</th>)}</tr></thead>
+            <tbody>{value.slice(0, 200).map((r, i) => <tr key={i}>{cols.map((c) => <td key={c} style={tdCell}>{fmtScalar(r[c])}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      );
+    }
+    return <div style={{ fontSize: '.85rem', color: C.ink }}>{value.map((v) => fmtScalar(v)).join(', ')}</div>;
+  }
+  const rows = Object.entries(value);
+  const allScalar = rows.every(([, v]) => v == null || typeof v !== 'object');
+  if (allScalar) {
+    return (
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '.84rem' }}>
+        <tbody>{rows.map(([k, v]) => <tr key={k}><td style={{ ...tdCell, fontWeight: 700, color: C.navy, width: '45%' }}>{prettyKey(k)}</td><td style={tdCell}>{fmtScalar(v)}</td></tr>)}</tbody>
+      </table>
+    );
+  }
+  return <div>{rows.map(([k, v]) => <div key={k} style={{ marginBottom: 10 }}><div style={{ fontWeight: 700, color: C.navy, fontSize: '.82rem', marginBottom: 4 }}>{prettyKey(k)}</div><ValueBlock value={v} /></div>)}</div>;
+}
+
+const thCell = { textAlign: 'left', padding: '7px 10px', borderBottom: `2px solid ${C.line}`, color: C.muted, fontWeight: 700, fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.03em', whiteSpace: 'nowrap' };
+const tdCell = { padding: '7px 10px', borderBottom: `1px solid ${C.line}`, color: C.ink };
+function prettyKey(k) { return String(k).replace(/[_-]+/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()); }
+function fmtScalar(v) {
+  if (v == null) return '—';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (typeof v === 'number') { if (!Number.isFinite(v)) return '—'; const r = Math.round(v * 100) / 100; return r.toLocaleString(undefined, { maximumFractionDigits: 2 }); }
+  return String(v);
 }
 
 /* ============================ CHART PRIMITIVES ============================ */
