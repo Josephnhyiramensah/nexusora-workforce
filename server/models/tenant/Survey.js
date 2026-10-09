@@ -17,7 +17,10 @@ const schema = new mongoose.Schema({
     department: String,
   },
   anonymous: { type: Boolean, default: true },
-  status: { type: String, enum: ['draft', 'open', 'closed'], default: 'draft' },
+  status: { type: String, enum: ['draft', 'scheduled', 'open', 'closed'], default: 'draft' },
+  // Scheduling: opensAt flips a scheduled survey to open; closesAt is the deadline.
+  opensAt: Date,
+  closesAt: Date,
   createdBy: String,
   openedAt: Date,
   closedAt: Date,

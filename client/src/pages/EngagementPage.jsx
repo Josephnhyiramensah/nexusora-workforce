@@ -13,7 +13,8 @@ import {
 
 const WRITE_ROLES = ['super_admin', 'hr_manager', 'hr_officer'];
 const KINDS = [['scale', 'Scale 1–5'], ['nps', 'Recommend 0–10 (eNPS)'], ['choice', 'Multiple choice'], ['text', 'Free text']];
-const STATUS_MAP = { draft: ['Draft', 'grey'], open: ['Open', 'green'], closed: ['Closed', 'red'] };
+const STATUS_MAP = { draft: ['Draft', 'grey'], scheduled: ['Scheduled', 'blue'], open: ['Open', 'green'], closed: ['Closed', 'red'] };
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 const TYPE_LABEL = { pulse: 'Pulse', enps: 'eNPS', custom: 'Custom' };
 
 /* ================================ ROOT ================================ */
@@ -40,6 +41,60 @@ export default function EngagementPage() {
       {section === 'answer' && <AnswerSurveys />}
     </ModuleShell>
   );
+}
+
+const hcell = { padding: '8px 10px', fontSize: '.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', color: C.muted, borderBottom: `1px solid ${C.lineSoft}`, whiteSpace: 'nowrap' };
+const dcell = { padding: '7px 10px', fontSize: '.82rem', borderBottom: `1px solid ${C.lineSoft}` };
+const trimTxt = (t) => (t && t.length > 16 ? t.slice(0, 14) + '…' : t);
+function heatColor(kind, v) {
+  if (v == null) return { bg: '#f2f4f8', fg: C.muted2 };
+  if (kind === 'nps') {
+    if (v >= 30) return { bg: '#d6f0e0', fg: '#12703f' };
+    if (v >= 0) return { bg: '#eaf7ef', fg: '#1f7a4d' };
+    if (v >= -30) return { bg: '#fdeaea', fg: '#a8262a' };
+    return { bg: '#f8d4d6', fg: '#8f1d20' };
+  }
+  if (v >= 4) return { bg: '#d6f0e0', fg: '#12703f' };
+  if (v >= 3) return { bg: '#fdf3df', fg: '#8a5a00' };
+  return { bg: '#fdeaea', fg: '#a8262a' };
+}
+function SegmentHeatmap({ segments }) {
+  if (!segments || !segments.columns.length || !segments.rows.length) return null;
+  const cols = segments.columns;
+  return (
+    <Card title="By department" sub={`anonymity floor ${segments.minN}`}>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+          <thead><tr>
+            <th style={{ ...hcell, textAlign: 'left' }}>Department</th>
+            <th style={{ ...hcell, textAlign: 'right' }}>n</th>
+            {cols.map((c) => <th key={c.questionId} style={{ ...hcell, textAlign: 'center', minWidth: 86 }} title={c.text}>{c.kind === 'nps' ? 'eNPS' : trimTxt(c.text)}</th>)}
+          </tr></thead>
+          <tbody>
+            {segments.rows.map((r) => (
+              <tr key={r.segment}>
+                <td style={{ ...dcell, fontWeight: 700, color: C.navy }}>{r.segment}</td>
+                <td style={{ ...dcell, textAlign: 'right', ...NUM, color: C.muted2 }}>{r.count}</td>
+                {cols.map((c) => {
+                  if (r.suppressed) return <td key={c.questionId} style={{ ...dcell, textAlign: 'center', color: C.muted2, background: '#f6f7fa' }}>—</td>;
+                  const v = r.scores[c.questionId];
+                  const col = heatColor(c.kind, v);
+                  return <td key={c.questionId} style={{ ...dcell, textAlign: 'center', background: col.bg, color: col.fg, fontWeight: 700, ...NUM }}>{v == null ? '—' : v}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {segments.rows.some((r) => r.suppressed) && <div style={{ fontSize: '.72rem', color: C.muted2, marginTop: 8 }}>“—” — fewer than {segments.minN} responses, hidden for anonymity.</div>}
+    </Card>
+  );
+}
+
+function RateBar({ pct }) {
+  const p = pct == null ? 0 : Math.max(0, Math.min(100, pct));
+  const col = pct == null ? C.line : (p >= 60 ? '#1f9d57' : p >= 30 ? '#c77700' : C.red);
+  return <div style={{ height: 7, borderRadius: 999, background: '#eef2f8', overflow: 'hidden' }}><div style={{ width: `${p}%`, height: '100%', background: col, borderRadius: 999 }} /></div>;
 }
 
 /* small distribution bar row, consistent with the kit */
@@ -96,17 +151,22 @@ function Surveys() {
           {!surveys ? <Empty>Loading…</Empty>
             : surveys.length === 0 ? <Empty>No surveys yet. Create your first one with “New survey”.</Empty>
               : (
-                <TableWrap head={[['Survey'], ['Type'], ['Audience'], ['Responses', 'r'], ['Status'], ['', 'r']]}>
+                <TableWrap head={[['Survey'], ['Type'], ['Audience'], ['Participation'], ['Status'], ['', 'r']]}>
                   {surveys.map((s) => (
                     <tr key={s._id} style={rowStyle}>
-                      <td style={td}><div style={{ fontWeight: 700, color: C.navy }}>{s.title}</div><div style={{ fontSize: '.74rem', color: C.muted2 }}>{s.questions} question(s){s.anonymous ? ' · anonymous' : ''}</div></td>
+                      <td style={td}><div style={{ fontWeight: 700, color: C.navy }}>{s.title}</div><div style={{ fontSize: '.74rem', color: C.muted2 }}>{s.questions} question(s){s.anonymous ? ' · anonymous' : ''}{s.closesAt ? ` · closes ${fmtDate(s.closesAt)}` : (s.status === 'scheduled' && s.opensAt ? ` · opens ${fmtDate(s.opensAt)}` : '')}</div></td>
                       <td style={td}><Pill tone={s.type === 'enps' ? 'blue' : 'grey'}>{TYPE_LABEL[s.type] || cap(s.type)}</Pill></td>
                       <td style={td}>{s.audience?.scope === 'department' ? (s.audience.department || 'Department') : 'Everyone'}</td>
-                      <td style={{ ...td, textAlign: 'right', ...NUM, fontWeight: 700 }}>{s.responseCount}</td>
+                      <td style={td}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 90 }}><RateBar pct={s.responseRate} /></div>
+                          <span style={{ ...NUM, fontSize: '.78rem', color: C.muted2, whiteSpace: 'nowrap' }}>{s.responseCount}{s.eligible ? ` / ${s.eligible}` : ''}{s.responseRate != null ? ` · ${s.responseRate}%` : ''}</span>
+                        </div>
+                      </td>
                       <td style={td}><StatusPill map={STATUS_MAP} k={s.status} /></td>
                       <td style={{ ...td, textAlign: 'right' }}>
                         <div style={{ display: 'inline-flex', gap: 6 }}>
-                          {s.status === 'draft' && <button onClick={() => setStatus(s._id, 'open')} style={miniBtn('#1f9d57')}><Play size={13} /> Open</button>}
+                          {(s.status === 'draft' || s.status === 'scheduled') && <button onClick={() => setStatus(s._id, 'open')} style={miniBtn('#1f9d57')}><Play size={13} /> Open now</button>}
                           {s.status === 'open' && <button onClick={() => setStatus(s._id, 'closed')} style={miniBtn('#c77700')}><Square size={13} /> Close</button>}
                           <button onClick={() => del(s._id)} title="Delete" style={miniBtn(C.red, true)}><Trash2 size={13} /></button>
                         </div>
@@ -130,6 +190,8 @@ function CreateSurvey({ onClose, onCreated }) {
   const [anonymous, setAnonymous] = useState(true);
   const [scope, setScope] = useState('all');
   const [department, setDepartment] = useState('');
+  const [opensAt, setOpensAt] = useState('');
+  const [closesAt, setClosesAt] = useState('');
   const [questions, setQuestions] = useState([{ text: '', kind: 'scale', options: [] }]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -145,6 +207,7 @@ function CreateSurvey({ onClose, onCreated }) {
       await api.post('/engagement/surveys', {
         title, type, anonymous,
         audience: { scope, department: scope === 'department' ? department : '' },
+        opensAt: opensAt || null, closesAt: closesAt || null,
         questions: questions.filter((q) => q.text.trim()).map((q) => ({ text: q.text, kind: q.kind, options: q.kind === 'choice' ? (q.options || []) : [] })),
       });
       onCreated();
@@ -163,7 +226,10 @@ function CreateSurvey({ onClose, onCreated }) {
       <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '.85rem', color: C.ink, margin: '2px 0 14px' }}>
         <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} /> Anonymous responses
       </label>
-      {type === 'enps' && <div style={{ fontSize: '.78rem', color: C.muted2, marginBottom: 12 }}>The 0–10 recommend question is added automatically.</div>}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <label style={{ display: 'block', marginBottom: 12 }}><Lbl>Opens</Lbl><input type="datetime-local" value={opensAt} onChange={(e) => setOpensAt(e.target.value)} style={qInp} /></label>
+        <label style={{ display: 'block', marginBottom: 12 }}><Lbl>Closes</Lbl><input type="datetime-local" value={closesAt} onChange={(e) => setClosesAt(e.target.value)} style={qInp} /></label>
+      </div>
 
       <Lbl>Questions</Lbl>
       {questions.map((q, i) => (
@@ -204,10 +270,10 @@ function Results() {
       <Hero crumbs={['Engagement', 'Results']} title="Results" />
       {data && (
         <KpiBand>
-          <Kpi Icon={Inbox} label="Responses" value={data.results.responseCount} />
+          <Kpi Icon={Inbox} label="Responses" value={data.results.responseCount} foot={data.participation?.eligible ? <span>of {data.participation.eligible} eligible</span> : null} />
+          <Kpi Icon={Users} iconBg="#eaf2ff" iconColor={C.accentInk} label="Response rate" value={data.participation?.rate == null ? '—' : data.participation.rate} unit={data.participation?.rate == null ? '' : '%'} />
           {npsQ && <Kpi Icon={PieChart} iconBg={npsQ.enps >= 0 ? '#e7f7ee' : '#fdecec'} iconColor={npsQ.enps >= 0 ? '#1f9d57' : C.red} label="eNPS" value={npsQ.enps == null ? '—' : npsQ.enps} />}
           {npsQ && <Kpi Icon={Users} iconBg="#e7f7ee" iconColor="#1f9d57" label="Promoters" value={npsQ.promoters} />}
-          {npsQ && <Kpi Icon={Users} iconBg="#fdecec" iconColor={C.red} label="Detractors" value={npsQ.detractors} />}
         </KpiBand>
       )}
       <Body>
@@ -218,6 +284,8 @@ function Results() {
             {surveys.map((s) => <option key={s._id} value={s._id}>{s.title} ({s.responseCount} response{s.responseCount === 1 ? '' : 's'})</option>)}
           </select>
         </Card>
+
+        {data && <SegmentHeatmap segments={data.segments} />}
 
         {data && data.results.questions.map((q) => (
           <Card key={q.questionId} title={q.text} sub={`${q.answered} answered`}>

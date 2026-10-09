@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 const schema = new mongoose.Schema({
   surveyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Survey', index: true, required: true },
   respondentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
+  // Segment snapshot at submit time — lets results break down by group without
+  // storing identity. Suppressed below a minimum group size in results.
+  segment: { department: String },
   answers: [{
     questionId: { type: mongoose.Schema.Types.ObjectId },
     value: { type: mongoose.Schema.Types.Mixed },
