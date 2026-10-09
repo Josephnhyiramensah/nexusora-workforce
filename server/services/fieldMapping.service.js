@@ -307,6 +307,24 @@ function rowToDoc(headers, row, mapping) {
   return { doc, flat, issues, valid, staffId: flat.staffId ? String(flat.staffId).trim() : '' };
 }
 
+// Build a doc from an object already keyed by our field paths (e.g. corrected
+// rows coming back from the wizard's rejected-rows editor). Coerces + validates
+// the same way as a mapped row, so the fix-and-re-import path is consistent.
+function docFromFields(obj) {
+  const doc = {}; const flat = {}; const issues = [];
+  for (const [field, raw] of Object.entries(obj || {})) {
+    if (field === 'row' || field === '__row') continue;
+    if (!FIELD_BY_PATH[field]) { if (raw != null && raw !== '') { setPath(doc, field, raw); flat[field] = raw; } continue; }
+    const { value, ok, issue } = coerceValue(field, raw);
+    if (!ok && issue) { issues.push(`${FIELD_BY_PATH[field].label}: ${issue}`); continue; }
+    if (value != null && value !== '') { setPath(doc, field, value); flat[field] = value; }
+  }
+  const requiredFields = CATALOGUE.filter((c) => c.required).map((c) => c.field);
+  const missingReq = requiredFields.filter((f) => flat[f] == null || flat[f] === '');
+  missingReq.forEach((f) => issues.unshift(`${FIELD_BY_PATH[f].label} is missing (required)`));
+  return { doc, flat, issues, valid: missingReq.length === 0, staffId: flat.staffId ? String(flat.staffId).trim() : '' };
+}
+
 /* ---------------------------- preview build ----------------------------- */
 // Returns a sample + summary with NO database writes, using rowToDoc so it
 // mirrors the commit exactly (full-name split included).
@@ -372,5 +390,5 @@ function catalogueForUI() {
 
 module.exports = {
   CATALOGUE, mapColumns, coerceValue, buildPreview, catalogueForUI, norm,
-  splitFullName, detectFullNameColumn, augmentFullName, rowToDoc, planImport, FULLNAME,
+  splitFullName, detectFullNameColumn, augmentFullName, rowToDoc, docFromFields, planImport, FULLNAME,
 };

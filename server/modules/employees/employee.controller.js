@@ -504,27 +504,36 @@ const importAnalyze = asyncHandler(async (req, res) => {
  *  NOT written — they come back in rejectedRows for HR to fix and re-import.
  * ------------------------------------------------------------------ */
 const importCommit = asyncHandler(async (req, res) => {
-  if (!req.file) return res.status(400).json({ message: 'No file uploaded (field name must be "file").' });
   const Employee = req.tenantConn.model('Employee');
   const updateExisting = String(req.body.updateExisting) === 'true';
 
-  let parsed;
-  try { parsed = await parseSheet(req.file); }
-  catch (e) { return res.status(400).json({ message: 'Could not read the file. Upload a valid .xlsx or .csv.' }); }
-  const { headers, rows } = parsed;
-  if (!headers.length || !rows.length) return res.status(400).json({ message: 'The file has no header row or no data rows.' });
+  // Two entry modes: a raw file (first import), or corrected field-keyed rows
+  // coming back from the wizard's rejected-rows editor (fix & re-import).
+  let built;
+  if (req.file) {
+    let parsed;
+    try { parsed = await parseSheet(req.file); }
+    catch (e) { return res.status(400).json({ message: 'Could not read the file. Upload a valid .xlsx or .csv.' }); }
+    const { headers, rows } = parsed;
+    if (!headers.length || !rows.length) return res.status(400).json({ message: 'The file has no header row or no data rows.' });
 
-  // Use the confirmed mapping from the wizard if sent; otherwise map afresh.
-  let mapping;
-  if (req.body.mapping) {
-    try { mapping = JSON.parse(req.body.mapping); } catch { return res.status(400).json({ message: 'Invalid mapping payload.' }); }
-    if (!Array.isArray(mapping)) return res.status(400).json({ message: 'Mapping must be an array of {source, field}.' });
+    let mapping;
+    if (req.body.mapping) {
+      try { mapping = JSON.parse(req.body.mapping); } catch { return res.status(400).json({ message: 'Invalid mapping payload.' }); }
+      if (!Array.isArray(mapping)) return res.status(400).json({ message: 'Mapping must be an array of {source, field}.' });
+    } else {
+      mapping = fieldMap.mapColumns(headers).mapping;
+    }
+    mapping = fieldMap.augmentFullName(headers, mapping);
+    built = rows.map((r, i) => ({ i, row: i + 2, ...fieldMap.rowToDoc(headers, r, mapping) }));
+  } else if (req.body.rows) {
+    let rowsJson;
+    try { rowsJson = JSON.parse(req.body.rows); } catch { return res.status(400).json({ message: 'Invalid rows payload.' }); }
+    if (!Array.isArray(rowsJson) || !rowsJson.length) return res.status(400).json({ message: 'No rows to import.' });
+    built = rowsJson.map((obj, i) => ({ i, row: obj.row || (i + 1), ...fieldMap.docFromFields(obj) }));
   } else {
-    mapping = fieldMap.mapColumns(headers).mapping;
+    return res.status(400).json({ message: 'Provide a file, or corrected rows to re-import.' });
   }
-  mapping = fieldMap.augmentFullName(headers, mapping);
-
-  const built = rows.map((r, i) => ({ i, ...fieldMap.rowToDoc(headers, r, mapping) }));
   const existingIds = new Set();
   const wantIds = [...new Set(built.filter((b) => b.valid && b.staffId).map((b) => b.staffId))];
   if (wantIds.length) {
