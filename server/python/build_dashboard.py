@@ -440,7 +440,7 @@ def build(job):
     narr = spec.get("narrative") or {}
     has_narr = bool(narr) and any(narr.get(k) for k in ("headline", "summary", "findings", "risks", "recommendations"))
     if has_narr:
-        wsx = wb.add_worksheet("Insights")
+        wsx = wb.add_worksheet("AI Insights")
         wsx.hide_gridlines(2)
         wsx.set_column("A:A", 2)
         wsx.set_column("B:B", 112)
@@ -487,7 +487,7 @@ def build(job):
     return {
         "ok": True,
         "output": out_path,
-        "sheets": ["Dashboard", "Data", "Analysis"] + (["Insights"] if has_narr else []),
+        "sheets": ["Dashboard", "Data", "Analysis"] + (["AI Insights"] if has_narr else []),
         "rows": int(nrows),
         "charts": charts_added,
         "warnings": warnings,

@@ -298,22 +298,8 @@ const analyzeNarrative = asyncHandler(async (req, res) => {
   res.json({ narrative });
 });
 
-// POST /ai/analyze/auto { rows?, source?, spec } → DETERMINISTIC statistical
-// analysis in Python (NO AI, no API key). Returns the same narrative shape so
-// the builder and the Excel "AI Insights" sheet work identically offline.
-const analyzeAuto = asyncHandler(async (req, res) => {
-  let rows = Array.isArray(req.body.rows) ? req.body.rows : [];
-  if (!rows.length && req.body.source === 'system') {
-    rows = xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn));
-  }
-  if (!rows.length) return res.status(422).json({ message: 'No data to analyse.' });
-  const spec = { selector: req.body.spec?.selector, currency: req.tenant?.baseCurrency };
-  const out = await xlsxDash.runAnalyze({ rows, spec });
-  res.json({ narrative: out.narrative, stats: out.stats });
-});
-
 module.exports = {
   status, insights, chat, buildDashboard, analyzeUpload,
   excelFromSystem, excelFromUpload,
-  datasetSystem, datasetUpload, specSuggest, excelBuild, analyzeNarrative, analyzeAuto,
+  datasetSystem, datasetUpload, specSuggest, excelBuild, analyzeNarrative,
 };

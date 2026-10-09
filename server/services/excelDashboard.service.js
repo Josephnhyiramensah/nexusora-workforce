@@ -191,38 +191,4 @@ function generate({ rows, spec }) {
   });
 }
 
-const ANALYZE_SCRIPT = path.join(__dirname, '..', 'python', 'analyze.py');
-
-// Run a Python script that returns JSON on stdout (no file output). Used by the
-// deterministic analytics engine — no AI involved.
-function runPythonJson(script, job) {
-  return new Promise((resolve, reject) => {
-    let tmp;
-    try { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nxw-an-')); }
-    catch (e) { return reject(new Error('Could not create temp dir: ' + e.message)); }
-    const jobPath = path.join(tmp, 'job.json');
-    try { fs.writeFileSync(jobPath, JSON.stringify(job)); }
-    catch (e) { rmrf(tmp); return reject(new Error('Could not stage job: ' + e.message)); }
-
-    const proc = spawn(PYTHON, [script, jobPath], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = ''; let stderr = ''; let done = false;
-    const timer = setTimeout(() => { if (!done) { done = true; proc.kill('SIGKILL'); rmrf(tmp); reject(new Error('Analysis timed out.')); } }, GEN_TIMEOUT_MS);
-    proc.stdout.on('data', (d) => { stdout += d; });
-    proc.stderr.on('data', (d) => { stderr += d; });
-    proc.on('error', (e) => { if (done) return; done = true; clearTimeout(timer); rmrf(tmp); reject(new Error(`Could not run the Python engine (${PYTHON}). ${e.message}`)); });
-    proc.on('close', (code) => {
-      if (done) return; done = true; clearTimeout(timer); rmrf(tmp);
-      let out = {};
-      try { out = JSON.parse(stdout || '{}'); } catch { /* */ }
-      if (code !== 0 || !out.ok) return reject(new Error(out.error || stderr.trim() || `Engine exited with code ${code}.`));
-      resolve(out);
-    });
-  });
-}
-
-// Deterministic statistical analysis (no AI). Returns { narrative, stats }.
-function runAnalyze({ rows, spec }) {
-  return runPythonJson(ANALYZE_SCRIPT, { data: rows, spec: spec || {} });
-}
-
-module.exports = { rowsFromEmployees, profileRows, specFromPrompt, sanitizeSpec, generate, runAnalyze };
+module.exports = { rowsFromEmployees, profileRows, specFromPrompt, sanitizeSpec, generate };

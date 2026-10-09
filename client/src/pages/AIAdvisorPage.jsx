@@ -38,14 +38,13 @@ export default function AIAdvisorPage() {
   return (
     <ModuleShell brand={{ title: 'Nexusora HR Assistant', subtitle: 'Data-grounded AI', Icon: Sparkles }} groups={groups} active={section} onSelect={setSection}>
       <div style={{ padding: '0 30px 48px', minWidth: 0 }}>
-        {cfg && <>
-          {/* The Dashboard Builder works WITHOUT AI (local Python analytics). The
-              other sections rely on Claude, so they show a notice when AI is off. */}
-          {section === 'excel' && <ExcelStudio configured={cfg.configured} />}
-          {section === 'insights' && (cfg.configured ? <Insights /> : <NotConfigured />)}
-          {section === 'ask' && (cfg.configured ? <Ask /> : <NotConfigured />)}
-          {section === 'builder' && (cfg.configured ? <DashboardBuilder /> : <NotConfigured />)}
-          {section === 'upload' && (cfg.configured ? <AnalyzeUpload /> : <NotConfigured />)}
+        {cfg && !cfg.configured && <NotConfigured />}
+        {cfg && cfg.configured && <>
+          {section === 'insights' && <Insights />}
+          {section === 'ask' && <Ask />}
+          {section === 'builder' && <DashboardBuilder />}
+          {section === 'upload' && <AnalyzeUpload />}
+          {section === 'excel' && <ExcelStudio />}
         </>}
         {!cfg && <div style={{ color: C.muted, padding: 40 }}>Loading…</div>}
       </div>
@@ -374,7 +373,7 @@ function defaultSpec(cols) {
 const normalizeSpec = (s) => ({ title: s.title || 'Workforce Analytics Dashboard', selector: s.selector || '', kpis: Array.isArray(s.kpis) ? s.kpis : [], breakdowns: Array.isArray(s.breakdowns) ? s.breakdowns : [], derived: Array.isArray(s.derived) ? s.derived : [] });
 const errMsg = async (e) => { let m = e?.response?.data?.message; try { const t = await e?.response?.data?.text?.(); if (t) m = JSON.parse(t).message || m; } catch { /* */ } return m || 'Something went wrong.'; };
 
-function ExcelStudio({ configured }) {
+function ExcelStudio() {
   const { tenant } = useAuth();
   const currency = tenant?.baseCurrency || '';
   const [step, setStep] = useState('source');       // 'source' | 'build'
@@ -412,15 +411,6 @@ function ExcelStudio({ configured }) {
       const kpis = spec.kpis.map((k) => ({ label: k.label, value: kpiValue(frows, k), format: k.format }));
       const breakdowns = spec.breakdowns.map((b) => ({ title: b.title, by: b.by, agg: b.agg, series: breakdownSeries(frows, b) }));
       const { data } = await api.post('/ai/analyze/narrative', { title: spec.title, prompt: aiPrompt, kpis, breakdowns, meta: { rows: frows.length, currency } });
-      if (data.narrative) setSpec((s) => ({ ...s, narrative: data.narrative }));
-    } catch (e) { setErr(await errMsg(e)); } finally { setNarrBusy(false); }
-  }
-
-  // Deterministic analysis — runs entirely on your server (Python), no AI.
-  async function localAnalyze() {
-    setNarrBusy(true); setErr('');
-    try {
-      const { data } = await api.post('/ai/analyze/auto', { rows: frows, source, spec: { selector: spec.selector } });
       if (data.narrative) setSpec((s) => ({ ...s, narrative: data.narrative }));
     } catch (e) { setErr(await errMsg(e)); } finally { setNarrBusy(false); }
   }
@@ -488,30 +478,15 @@ function ExcelStudio({ configured }) {
         subtitle={`${rows.length.toLocaleString()} rows · ${columns.length} columns`}
         action={<button onClick={() => { setStep('source'); setErr(''); setDone(''); }} style={ghostBtnStyle}>← Change data</button>} />
 
-      {/* Analysis — works WITHOUT AI (local Python stats); AI adds design-by-prompt + richer prose */}
-      <Card title="Analysis">
-        {configured ? (
-          <>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g. attrition and avg salary by department and grade, with a gender split"
-                style={{ flex: 1, minWidth: 220, padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, fontSize: '.88rem', fontFamily: 'inherit', color: C.ink }} />
-              <button onClick={suggest} disabled={aiBusy} style={primaryBtnStyle(aiBusy, true)}>{aiBusy ? <RefreshCw size={15} /> : <Wand2 size={15} />} {aiBusy ? 'Designing…' : 'Design it (AI)'}</button>
-              <button onClick={analyzeAI} disabled={narrBusy} style={{ ...primaryBtnStyle(narrBusy, true), background: '#fff', color: C.navy, border: `1px solid ${C.navy}` }}>{narrBusy ? <RefreshCw size={15} /> : <Sparkles size={15} />} Analyse (AI)</button>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-              <button onClick={localAnalyze} disabled={narrBusy} style={{ ...primaryBtnStyle(narrBusy, true), background: '#f7f9fc', color: C.ink, border: `1px solid ${C.line}` }}><TrendingUp size={15} /> Analyse (local, no AI)</button>
-              <span style={{ fontSize: '.74rem', color: C.muted }}>Deterministic statistics computed on your server.</span>
-            </div>
-          </>
-        ) : (
-          <>
-            <button onClick={localAnalyze} disabled={narrBusy} style={primaryBtnStyle(narrBusy)}>{narrBusy ? <RefreshCw size={16} /> : <TrendingUp size={16} />} {narrBusy ? 'Analysing…' : 'Analyse figures'}</button>
-            <div style={{ fontSize: '.78rem', color: C.muted, marginTop: 10, lineHeight: 1.6 }}>
-              AI is off, so this builds and analyses <strong>entirely on your server</strong> — no Claude needed. You get real statistics (attrition vs healthy bands, pay-equity gaps, correlations, concentration) as findings & recommendations, shown below and added as an “Insights” sheet on export.
-              Turn on the AI (set <code>ANTHROPIC_API_KEY</code>) to also describe dashboards in words and get richer written narrative.
-            </div>
-          </>
-        )}
+      {/* AI: design the dashboard, or analyse the current figures */}
+      <Card title="Work with AI (optional)">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g. attrition and avg salary by department and grade, with a gender split"
+            style={{ flex: 1, minWidth: 220, padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, fontSize: '.88rem', fontFamily: 'inherit', color: C.ink }} />
+          <button onClick={suggest} disabled={aiBusy} style={primaryBtnStyle(aiBusy, true)}>{aiBusy ? <RefreshCw size={15} /> : <Wand2 size={15} />} {aiBusy ? 'Designing…' : 'Design it'}</button>
+          <button onClick={analyzeAI} disabled={narrBusy} style={{ ...primaryBtnStyle(narrBusy, true), background: '#fff', color: C.navy, border: `1px solid ${C.navy}` }}>{narrBusy ? <RefreshCw size={15} /> : <Sparkles size={15} />} {narrBusy ? 'Analysing…' : 'Analyse figures'}</button>
+        </div>
+        <div style={{ fontSize: '.74rem', color: C.muted, marginTop: 8 }}><strong>Design it</strong> picks KPIs & charts from your prompt. <strong>Analyse figures</strong> reads the current dashboard's real numbers and writes findings & recommendations (shown below and added as an “AI Insights” sheet in the Excel).</div>
       </Card>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 420px) 1fr', gap: 16, alignItems: 'start' }} className="nx-builder-grid">
@@ -617,7 +592,7 @@ function ExcelStudio({ configured }) {
                 {(spec.narrative.findings || []).length > 0 && <NarrBlock title="Key findings" items={spec.narrative.findings.map((f) => ({ t: String(f) }))} />}
                 {(spec.narrative.risks || []).length > 0 && <NarrBlock title="Risks" items={spec.narrative.risks.map((r) => ({ t: r.title, d: r.detail }))} />}
                 {(spec.narrative.recommendations || []).length > 0 && <NarrBlock title="Recommendations" items={spec.narrative.recommendations.map((r) => ({ t: r.action, d: r.rationale }))} />}
-                <div style={{ fontSize: '.72rem', color: C.muted, marginTop: 8 }}>Generated from the current view{spec.selector && filterVal !== '(All)' ? ` (filtered: ${filterVal})` : ''}. Included as an “Insights” sheet on export.</div>
+                <div style={{ fontSize: '.72rem', color: C.muted, marginTop: 8 }}>Generated from the current view{spec.selector && filterVal !== '(All)' ? ` (filtered: ${filterVal})` : ''}. Included as an “AI Insights” sheet on export.</div>
               </div>
             )}
           </Card>
