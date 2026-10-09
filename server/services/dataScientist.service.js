@@ -16,32 +16,99 @@ const { spawn } = require('child_process');
 const ai = require('./ai.service');
 
 const SANDBOX = path.join(__dirname, '..', 'python', 'sandbox_runner.py');
-const PYTHON = process.env.PYTHON_BIN || 'python3';
 const RUN_TIMEOUT_MS = Number(process.env.SANDBOX_TIMEOUT_MS || 20000);
 const MAX_ROWS = Number(process.env.SANDBOX_MAX_ROWS || 50000);
 const MAX_CODE_CHARS = 24000;
 
+/* ----------------------- Python interpreter resolution -------------------- */
+// Node may be launched where "python3" isn't the interpreter that has the
+// scientific stack (common on Windows: libs live in "python" / C:\PythonXX,
+// while "python3" is a Store shim). And `-I` (isolated) ignores user-site
+// packages. So we PROBE: try each candidate interpreter with each flag set and
+// pick the first combination where `import pandas, numpy` actually succeeds.
+// Preferring `-I` (most isolated); falling back to `-E -B` (still ignores
+// PYTHON* env vars, no cwd-shadowing risk here) only if that's the only way the
+// libraries load. Result is cached for the process.
+const PY_FLAGSETS = [['-I'], ['-E', '-B']];
+
+function pyCandidates() {
+  const seen = new Set();
+  const out = [];
+  const add = (cmd, pre) => { const k = cmd + '|' + pre.join(' '); if (cmd && !seen.has(k)) { seen.add(k); out.push({ cmd, pre }); } };
+  if (process.env.PYTHON_BIN) add(process.env.PYTHON_BIN, []);
+  add('python3', []);
+  add('python', []);
+  add('py', ['-3']);
+  return out;
+}
+
+function probe(cmd, args) {
+  return new Promise((resolve) => {
+    let done = false;
+    let p;
+    const fin = (v) => { if (!done) { done = true; clearTimeout(t); resolve(v); } };
+    const t = setTimeout(() => { try { p && p.kill('SIGKILL'); } catch { /* */ } fin(false); }, 15000);
+    try { p = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'ignore'] }); }
+    catch { return fin(false); }
+    p.on('error', () => fin(false));
+    p.on('close', (code) => fin(code === 0));
+  });
+}
+
+let _py = null;        // { cmd, flags:[...] }
+let _pyProbe = null;
+async function resolvePython() {
+  if (_py) return _py;
+  if (!_pyProbe) {
+    _pyProbe = (async () => {
+      for (const flags of PY_FLAGSETS) {
+        for (const c of pyCandidates()) {
+          // eslint-disable-next-line no-await-in-loop
+          const ok = await probe(c.cmd, [...c.pre, ...flags, '-c', 'import pandas, numpy']);
+          if (ok) { _py = { cmd: c.cmd, flags: [...c.pre, ...flags] }; return _py; }
+        }
+      }
+      // Nothing worked — fall back so the error surfaced is actionable.
+      _py = { cmd: process.env.PYTHON_BIN || 'python3', flags: ['-I'] };
+      return _py;
+    })();
+  }
+  return _pyProbe;
+}
+
 /* --------------------------- friendly py errors --------------------------- */
-function friendlyPyError(stderr, code) {
+function friendlyPyError(stderr, code, pyCmd) {
   const raw = String(stderr || '').trim();
   const miss = raw.match(/ModuleNotFoundError: No module named ['"]([^'"]+)['"]/);
   if (miss) {
-    return `The analytics engine is missing a Python dependency ("${miss[1]}"). On the server, install the engine's requirements into the interpreter Node runs (PYTHON_BIN, currently "${PYTHON}"):  "${PYTHON}" -m pip install -r server/python/requirements.txt`;
+    return `The analytics engine is missing a Python dependency ("${miss[1]}"). Install the engine's requirements into the interpreter Node runs ("${pyCmd || 'python3'}"), e.g.  "${pyCmd || 'python3'}" -m pip install -r server/python/requirements.txt  — or set PYTHON_BIN to a Python that has them.`;
   }
   if (/No such file or directory|ENOENT|not found/i.test(raw) && /python/i.test(raw)) {
-    return `Python 3 was not found on the server. Install Python 3, or set PYTHON_BIN to the correct interpreter (currently "${PYTHON}").`;
+    return `Python 3 was not found on the server. Install Python 3, or set PYTHON_BIN to the correct interpreter.`;
   }
   const last = raw.split('\n').map((l) => l.trim()).filter(Boolean).pop();
   return last ? `The analytics engine failed: ${last}` : `The analytics engine exited with code ${code}.`;
+}
+
+// Translate the runner's own "engine not available: No module named X" (emitted
+// as JSON when the trusted imports fail) into the same actionable guidance.
+function translateEngineError(res, pyCmd) {
+  const e = String(res && res.error || '');
+  const m = e.match(/engine not available:.*No module named ['"]?([\w.]+)/i);
+  if (m) return friendlyPyError(`ModuleNotFoundError: No module named '${m[1]}'`, 0, pyCmd);
+  return res && res.error;
 }
 
 /* ------------------------------ run sandbox ------------------------------- */
 // Spawn the locked runner, feed {code, data} on stdin, read the JSON verdict.
 // Always resolves with a structured object (ok / blocked / error) unless the
 // engine itself cannot be launched.
-function runSandbox({ code, data }) {
+async function runSandbox({ code, data }) {
+  const py = await resolvePython();
   return new Promise((resolve, reject) => {
-    const proc = spawn(PYTHON, ['-I', SANDBOX], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let proc;
+    try { proc = spawn(py.cmd, [...py.flags, SANDBOX], { stdio: ['pipe', 'pipe', 'pipe'] }); }
+    catch (e) { return reject(new Error(`Could not start the analytics engine with "${py.cmd}". Install Python 3 and its requirements, or set PYTHON_BIN. (${e.message})`)); }
     let stdout = '';
     let stderr = '';
     let done = false;
@@ -54,13 +121,14 @@ function runSandbox({ code, data }) {
 
     proc.stdout.on('data', (d) => { stdout += d; if (stdout.length > 8e6) { try { proc.kill('SIGKILL'); } catch { /* */ } } });
     proc.stderr.on('data', (d) => { stderr += d; });
-    proc.on('error', (e) => finish(reject, new Error(`Could not start the analytics engine with "${PYTHON}". Install Python 3 and its requirements, or set PYTHON_BIN. (${e.message})`)));
+    proc.on('error', (e) => finish(reject, new Error(`Could not start the analytics engine with "${py.cmd}". Install Python 3 and its requirements, or set PYTHON_BIN. (${e.message})`)));
     proc.on('close', (codeNum) => {
       let res = null;
       try { res = JSON.parse((stdout || '').trim().split('\n').pop() || '{}'); } catch { /* keep null */ }
       if (!res || typeof res !== 'object') {
-        return finish(resolve, { ok: false, error: friendlyPyError(stderr, codeNum) });
+        return finish(resolve, { ok: false, error: friendlyPyError(stderr, codeNum, py.cmd) });
       }
+      if (!res.ok && res.error) res.error = translateEngineError(res, py.cmd) || res.error;
       finish(resolve, res);
     });
 
@@ -174,7 +242,7 @@ async function analyse({ question, rows, dataset, datasetLabel, history }) {
       role: 'user',
       content: `Dataset: ${label}\nColumns (schema only):\n${JSON.stringify(cols, null, 0)}\n\nTotal rows: ${data.length}${prior}\n\nQuestion: ${q}${extra || ''}\n\nWrite the analysis code now.`,
     }],
-    maxTokens: 1600,
+    maxTokens: 4000,  // enough for a full multi-step analysis without truncation
     temperature: 0,
   });
 
@@ -183,9 +251,13 @@ async function analyse({ question, rows, dataset, datasetLabel, history }) {
   let run = await runSandbox({ code, data });
 
   // If the sandbox REJECTED the code (it never ran), give Claude one chance to
-  // fix it with the exact reason. A blocked attempt has zero security cost.
+  // fix it with the exact reason. A blocked attempt has zero security cost. A
+  // syntax error usually means truncation, so we also tell it to stay complete.
   if (run && run.blocked) {
-    const fix = `\n\nYour previous code was REJECTED by the sandbox: "${run.error}". Rewrite it to obey every rule.`;
+    const truncated = /syntax error|unterminated|unexpected EOF|EOL/i.test(run.error || '');
+    const fix = truncated
+      ? `\n\nYour previous code was REJECTED (likely truncated): "${run.error}". Write COMPLETE, self-contained code — close every string, bracket and block — and keep it focused and concise so it finishes well within the limit.`
+      : `\n\nYour previous code was REJECTED by the sandbox: "${run.error}". Rewrite it to obey every rule.`;
     code = stripFences(await ask(fix));
     run = await runSandbox({ code, data });
   }
