@@ -300,37 +300,8 @@ const deactivate = asyncHandler(async (req, res) => {
   res.json({ message: 'Employee offboarded', employee: e });
 });
 
-/* ------------------------------------------------------------------ *
- *  Bulk import — POST /employees/import (xlsx/csv).
- *  Header row maps friendly column names to employee fields; each data
- *  row becomes an employee. Reports created / skipped / row errors.
- * ------------------------------------------------------------------ */
-const IMPORT_MAP = {
-  'firstname': 'firstName', 'first name': 'firstName', 'first': 'firstName',
-  'lastname': 'lastName', 'last name': 'lastName', 'surname': 'lastName', 'last': 'lastName',
-  'staffid': 'staffId', 'staff id': 'staffId', 'staff no': 'staffId', 'employee id': 'staffId',
-  'gender': 'gender', 'sex': 'gender',
-  'dateofbirth': 'dateOfBirth', 'date of birth': 'dateOfBirth', 'dob': 'dateOfBirth', 'birth date': 'dateOfBirth',
-  'nationalid': 'nationalId', 'national id': 'nationalId', 'ghana card': 'nationalId', 'id number': 'nationalId',
-  'email': 'email', 'e-mail': 'email',
-  'phone': 'phone', 'mobile': 'phone', 'telephone': 'phone', 'contact': 'phone',
-  'address': 'address',
-  'jobtitle': 'employment.jobTitle', 'job title': 'employment.jobTitle', 'position': 'employment.jobTitle', 'designation': 'employment.jobTitle',
-  'department': 'employment.department', 'dept': 'employment.department',
-  'section': 'employment.section', 'estate': 'employment.section',
-  'workerclass': 'employment.workerClass', 'worker class': 'employment.workerClass', 'class': 'employment.workerClass',
-  'employmenttype': 'employment.employmentType', 'employment type': 'employment.employmentType', 'type': 'employment.employmentType',
-  'grade': 'employment.grade',
-  'startdate': 'employment.startDate', 'start date': 'employment.startDate', 'date joined': 'employment.startDate', 'hire date': 'employment.startDate',
-  'paybasis': 'compensation.payBasis', 'pay basis': 'compensation.payBasis',
-  'currency': 'compensation.currency',
-  'basesalary': 'compensation.baseSalary', 'base salary': 'compensation.baseSalary', 'salary': 'compensation.baseSalary', 'monthly salary': 'compensation.baseSalary',
-  'dailyrate': 'compensation.dailyRate', 'daily rate': 'compensation.dailyRate',
-  'hourlyrate': 'compensation.hourlyRate', 'hourly rate': 'compensation.hourlyRate',
-};
-const NUM_PATHS = new Set(['compensation.baseSalary', 'compensation.dailyRate', 'compensation.hourlyRate']);
-const DATE_PATHS = new Set(['dateOfBirth', 'employment.startDate']);
-
+/* Bulk import lives in importAnalyze + importCommit (smart mapping, dedupe,
+ * validation). These helpers are shared with that pipeline. */
 function setPath(obj, path, val) {
   const keys = path.split('.'); let o = obj;
   for (let i = 0; i < keys.length - 1; i++) { o[keys[i]] = o[keys[i]] || {}; o = o[keys[i]]; }
@@ -347,67 +318,6 @@ function cellText(v) {
   return String(v).trim();
 }
 
-const importEmployees = asyncHandler(async (req, res) => {
-  if (!req.file) return res.status(400).json({ message: 'No file uploaded (field name must be "file").' });
-  const Employee = req.tenantConn.model('Employee');
-  const wb = new ExcelJS.Workbook();
-  const fname = (req.file.originalname || '').toLowerCase();
-  try {
-    if (fname.endsWith('.csv')) await wb.csv.read(Readable.from(req.file.buffer.toString('utf8')));
-    else await wb.xlsx.load(req.file.buffer);
-  } catch (e) {
-    return res.status(400).json({ message: 'Could not read the file. Upload a valid .xlsx or .csv.' });
-  }
-  const ws = wb.worksheets[0];
-  if (!ws) return res.status(400).json({ message: 'The file has no sheet or rows.' });
-
-  const colPath = {};
-  ws.getRow(1).eachCell((cell, col) => {
-    const key = String(cellText(cell) || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    const path = IMPORT_MAP[key] || IMPORT_MAP[key.replace(/ /g, '')];
-    if (path) colPath[col] = path;
-  });
-  const paths = Object.values(colPath);
-  if (!paths.includes('firstName') || !paths.includes('lastName')) {
-    return res.status(400).json({ message: 'The sheet must have "First Name" and "Last Name" columns. Download the template and use those headers.' });
-  }
-
-  const docs = [];
-  const errors = [];
-  for (let r = 2; r <= ws.rowCount; r++) {
-    const row = ws.getRow(r);
-    if (!row || row.actualCellCount === 0) continue;
-    const emp = {};
-    for (const [col, path] of Object.entries(colPath)) {
-      let val = cellText(row.getCell(Number(col)));
-      if (val === '' || val == null) continue;
-      if (NUM_PATHS.has(path)) { const n = Number(String(val).replace(/[, ]/g, '')); if (isNaN(n)) continue; val = n; }
-      else if (DATE_PATHS.has(path)) { const d = (val instanceof Date) ? val : new Date(val); if (isNaN(d.getTime())) continue; val = d; }
-      setPath(emp, path, val);
-    }
-    if (!emp.firstName || !emp.lastName) {
-      if (Object.keys(emp).length) errors.push({ row: r, error: 'Missing first or last name' });
-      continue;
-    }
-    if (emp.compensation && !emp.compensation.currency) emp.compensation.currency = req.tenant.baseCurrency;
-    emp.createdAt = new Date();
-    docs.push(emp);
-  }
-
-  let created = 0;
-  if (docs.length) {
-    try {
-      const inserted = await Employee.insertMany(docs, { ordered: false });
-      created = inserted.length;
-    } catch (e) {
-      created = (e && Array.isArray(e.insertedDocs)) ? e.insertedDocs.length : 0;
-      if (e && Array.isArray(e.writeErrors)) {
-        e.writeErrors.slice(0, 50).forEach((we) => errors.push({ row: '—', error: (we.err && we.err.errmsg) || we.errmsg || 'insert failed' }));
-      }
-    }
-  }
-  res.json({ total: created + errors.length, created, skipped: errors.length, errors: errors.slice(0, 100) });
-});
 
 /* ------------------------------------------------------------------ *
  *  Bulk import — ANALYSE (dry run) — POST /employees/import/analyze.
@@ -688,4 +598,4 @@ const uploadPhoto = asyncHandler(async (req, res) => {
   res.json({ message: 'Photo updated', photo: emp.photo });
 });
 
-module.exports = { list, getById, getMe, myTeam, getMyLeave, submitMyLeave, getMyPayslips, getMyAttendance, create, update, history, deactivate, importEmployees, importAnalyze, importCommit, uploadDocument, deleteDocument, uploadPhoto };
+module.exports = { list, getById, getMe, myTeam, getMyLeave, submitMyLeave, getMyPayslips, getMyAttendance, create, update, history, deactivate, importAnalyze, importCommit, uploadDocument, deleteDocument, uploadPhoto };

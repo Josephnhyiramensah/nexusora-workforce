@@ -32,7 +32,6 @@ router.get('/:id/history', authorise(...READ), c.history);
 router.post('/', authorise(...WRITE), c.create);
 router.post('/import/analyze', authorise(...WRITE), upload.single('file'), c.importAnalyze);
 router.post('/import/commit', authorise(...WRITE), upload.single('file'), c.importCommit);
-router.post('/import', authorise(...WRITE), upload.single('file'), c.importEmployees);
 router.put('/:id', authorise(...WRITE), c.update);
 router.delete('/:id', authorise(...WRITE), c.deactivate);
 
