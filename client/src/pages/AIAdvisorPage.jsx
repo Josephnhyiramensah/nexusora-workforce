@@ -20,6 +20,8 @@ export default function AIAdvisorPage() {
   const initial = (() => { try { return new URLSearchParams(window.location.search).get('section') || 'insights'; } catch { return 'insights'; } })();
   const [section, setSection] = useState(initial);
   const [cfg, setCfg] = useState(null); // { configured, name }
+  const [handoff, setHandoff] = useState(null); // Data Scientist → Dashboard Builder
+  const goToBuilder = (payload) => { setHandoff(payload); setSection('excel'); };
 
   useEffect(() => { let a = true; (async () => { try { const { data } = await api.get('/ai/status'); if (a) setCfg(data); } catch { if (a) setCfg({ configured: false }); } })(); return () => { a = false; }; }, []);
 
@@ -46,8 +48,8 @@ export default function AIAdvisorPage() {
         {cfg && <>
           {section === 'insights' && (aiReady ? <Insights /> : <NotConfigured />)}
           {section === 'ask' && (aiReady ? <Ask /> : <NotConfigured />)}
-          {section === 'excel' && <ExcelStudio />}
-          {section === 'science' && (aiReady ? <DataScientist /> : <NotConfigured />)}
+          {section === 'excel' && <ExcelStudio preload={handoff} onConsumed={() => setHandoff(null)} />}
+          {section === 'science' && (aiReady ? <DataScientist onOpenBuilder={goToBuilder} /> : <NotConfigured />)}
           {section === 'import' && <ImportWizard />}
         </>}
       </div>
@@ -193,7 +195,7 @@ const DS_SUGGEST = [
   'Cluster employees into pay-and-tenure segments',
 ];
 
-function DataScientist() {
+function DataScientist({ onOpenBuilder } = {}) {
   const [catalogue, setCatalogue] = useState([{ key: 'employees', label: 'Employees' }]);
   const [dataset, setDataset] = useState('employees');
   const [source, setSource] = useState('system'); // 'system' | 'upload'
@@ -245,8 +247,21 @@ function DataScientist() {
     catch { setHistory([]); }
   }
   async function loadSaved(id) {
-    try { const { data } = await api.get(`/ai/data-science/${id}`); setThread([{ ...data, id: String(data._id) }]); setHistOpen(false); }
-    catch (e) { setErr(await errMsg(e)); }
+    try {
+      const { data } = await api.get(`/ai/data-science/${id}`);
+      if (data.dataset) setDataset(data.dataset);
+      if (data.source) setSource(data.source);
+      setThread([{ ...data, id: String(data._id) }]); setHistOpen(false);
+    } catch (e) { setErr(await errMsg(e)); }
+  }
+
+  // Hand the current data source to the Dashboard Builder (slicers, live pivots).
+  // Re-loadable only for a company dataset, or an upload whose file is in hand.
+  const canBuild = source === 'system' || !!file;
+  function openInBuilder() {
+    if (!onOpenBuilder) return;
+    if (source === 'upload') onOpenBuilder({ source: 'upload', file, label: file?.name || 'Uploaded file' });
+    else onOpenBuilder({ source: 'system', dataset, label: activeLabel });
   }
   async function removeSaved(id) {
     try { await api.delete(`/ai/data-science/${id}`); setHistory((h) => (h || []).filter((x) => String(x._id) !== String(id))); }
@@ -313,7 +328,7 @@ function DataScientist() {
       {err && <ErrBox>{err}</ErrBox>}
 
       {/* Thread of steps */}
-      {thread.map((step, i) => <StepCard key={step.id || i} step={step} index={i} total={thread.length} />)}
+      {thread.map((step, i) => <StepCard key={step.id || i} step={step} index={i} total={thread.length} onBuild={canBuild ? openInBuilder : null} />)}
       {busy && <div style={{ color: C.muted, padding: '18px 2px', fontSize: '.88rem' }}>Writing and running the analysis on your data…</div>}
       <div ref={bottom} />
 
@@ -325,7 +340,7 @@ function DataScientist() {
 const ghostHeadBtn = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', border: `1px solid rgba(255,255,255,.9)`, borderRadius: 10, background: 'rgba(255,255,255,.72)', color: C.navy, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' };
 
 // One analysis step in the thread — narrative, result, charts, code, export.
-function StepCard({ step, index, total }) {
+function StepCard({ step, index, total, onBuild }) {
   const [showCode, setShowCode] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState('');
@@ -374,6 +389,11 @@ function StepCard({ step, index, total }) {
             <button onClick={exportXlsx} disabled={exporting} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 13px', fontSize: '.8rem', fontWeight: 700, color: C.navy, cursor: 'pointer', opacity: exporting ? 0.6 : 1 }}>
               <Download size={15} /> {exporting ? 'Exporting…' : 'Export to Excel'}
             </button>
+            {onBuild && (
+              <button onClick={onBuild} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 13px', fontSize: '.8rem', fontWeight: 700, color: C.navy, cursor: 'pointer' }}>
+                <Table2 size={15} /> Build interactive dashboard
+              </button>
+            )}
             {step.code && (
               <button onClick={() => setShowCode((v) => !v)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 13px', fontSize: '.8rem', fontWeight: 700, color: C.navy, cursor: 'pointer' }}>
                 <Code2 size={15} /> {showCode ? 'Hide code' : 'View code'} <ChevronDown size={14} style={{ transform: showCode ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
@@ -544,7 +564,7 @@ function defaultSpec(cols) {
 const normalizeSpec = (s) => ({ title: s.title || 'Workforce Analytics Dashboard', selector: s.selector || '', kpis: Array.isArray(s.kpis) ? s.kpis : [], breakdowns: Array.isArray(s.breakdowns) ? s.breakdowns : [], derived: Array.isArray(s.derived) ? s.derived : [] });
 const errMsg = async (e) => { let m = e?.response?.data?.message; try { const t = await e?.response?.data?.text?.(); if (t) m = JSON.parse(t).message || m; } catch { /* */ } return m || 'Something went wrong.'; };
 
-function ExcelStudio() {
+function ExcelStudio({ preload, onConsumed } = {}) {
   const { tenant } = useAuth();
   const currency = tenant?.baseCurrency || '';
   const [step, setStep] = useState('source');       // 'source' | 'build'
@@ -572,8 +592,20 @@ function ExcelStudio() {
     setRows(data.rows || []); setColumns(data.columns || []);
     setSpec(defaultSpec(data.columns || [])); setFilterVal('(All)'); setStep('build'); setDone('');
   }
-  async function loadSystem() { setErr(''); setLoading(true); try { const { data } = await api.get('/ai/dataset/system'); if (!data.rows?.length) { setErr('No employee records to analyse yet.'); } else apply(data); } catch (e) { setErr(await errMsg(e)); } finally { setLoading(false); } }
-  async function loadUpload() { if (!file) { setErr('Choose a CSV or Excel file first.'); return; } setErr(''); setLoading(true); try { const fd = new FormData(); fd.append('file', file); const { data } = await api.post('/ai/dataset/upload', fd); apply(data); } catch (e) { setErr(await errMsg(e)); } finally { setLoading(false); } }
+  async function loadSystem(dataset) { setErr(''); setLoading(true); try { const q = dataset && dataset !== 'employees' ? `?dataset=${encodeURIComponent(dataset)}` : ''; const { data } = await api.get(`/ai/dataset/system${q}`); if (!data.rows?.length) { setErr('No data to analyse yet.'); } else apply(data); } catch (e) { setErr(await errMsg(e)); } finally { setLoading(false); } }
+  async function loadUploadFile(f) { const theFile = f || file; if (!theFile) { setErr('Choose a CSV or Excel file first.'); return; } setErr(''); setLoading(true); try { const fd = new FormData(); fd.append('file', theFile); const { data } = await api.post('/ai/dataset/upload', fd); apply(data); } catch (e) { setErr(await errMsg(e)); } finally { setLoading(false); } }
+  async function loadUpload() { return loadUploadFile(file); }
+
+  // Handoff from the Data Scientist: load the same dataset/file straight away.
+  useEffect(() => {
+    if (!preload) return;
+    (async () => {
+      if (preload.source === 'upload' && preload.file) { setSource('upload'); setFile(preload.file); await loadUploadFile(preload.file); }
+      else { setSource('system'); await loadSystem(preload.dataset); }
+      onConsumed && onConsumed();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preload]);
 
   async function suggest() { setAiBusy(true); setErr(''); try { const { data } = await api.post('/ai/spec/suggest', { schema: columns, prompt: aiPrompt, title: spec?.title }); if (data.spec) { setSpec((s) => ({ ...normalizeSpec(data.spec), narrative: s?.narrative })); setFilterVal('(All)'); } } catch (e) { setErr(await errMsg(e)); } finally { setAiBusy(false); } }
 

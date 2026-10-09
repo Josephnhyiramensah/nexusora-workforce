@@ -170,20 +170,30 @@ const CODER_SYSTEM = [
   'Write Python that analyses the pandas DataFrame `df` to answer the user question.',
   'The code runs in a LOCKED sandbox and is REJECTED (never executed) if it breaks any rule:',
   '',
+  'YOUR JOB: compute the answer, statistics, model/forecast and insights into the',
+  'dict `result`, and draw a few charts. That is ALL. You do NOT build files,',
+  'spreadsheets, Excel workbooks or dashboards — that is impossible here and is',
+  'handled by a separate tool. If the user asks for a "dashboard" or "Excel",',
+  'just produce the underlying analysis + charts; ignore the file/dashboard part.',
+  '',
   'ALLOWED (all pre-imported — do NOT import anything):',
   '  pd (pandas), np (numpy), df (the data), and when present sklearn, stats (scipy.stats), plt (matplotlib.pyplot, Agg backend).',
   '',
   'HARD RULES:',
   '  - No import statements of any kind. No open/eval/exec/compile/getattr/globals/__import__.',
   '  - No dunder (double-underscore) attribute access, e.g. no .__class__, .__dict__.',
-  '  - No file or network access. Do NOT use pd.read_*, to_csv/to_sql, np.load, .format(), .query(), .eval().',
+  '  - No file or network access. Do NOT use pd.read_*, to_csv/to_excel/to_sql, np.load/save, .format(), .query(), .eval().',
   '  - Use f-strings for text and boolean masks (df[df[col] > x]) for filtering.',
   '  - Put EVERY answer into the dict `result` using JSON-friendly values',
   '    (floats/ints/strings/lists/dicts). Round numbers sensibly.',
   '  - Compute real values from df. NEVER hard-code or guess numbers.',
+  '  - For a forecast/prediction, fit a simple model (e.g. sklearn LinearRegression',
+  '    on a time index, or a rolling trend) and put the projected values in result.',
   '  - Optional: build up to 4 charts with plt / df.plot(...). Give them titles.',
   '  - Guard for empty groups / missing columns so the code cannot crash.',
   '',
+  'KEEP IT SHORT AND COMPLETE: aim for well under 60 lines. Write compact, correct',
+  'code and make sure every string, bracket and block is closed — never stop mid-way.',
   'Return ONLY the Python code. No prose, no explanation, no markdown fences.',
 ].join('\n');
 
@@ -197,8 +207,15 @@ const NARRATE_SYSTEM = [
 
 function stripFences(text) {
   let t = String(text || '').trim();
-  const m = t.match(/```(?:python|py)?\s*([\s\S]*?)```/i);
-  if (m) t = m[1].trim();
+  // Closed fenced block: take the FIRST fence's contents.
+  const closed = t.match(/```(?:python|py)?\s*([\s\S]*?)```/i);
+  if (closed) {
+    t = closed[1].trim();
+  } else {
+    // Unclosed / truncated fence (```python with no closing ```): take the rest.
+    const open = t.match(/```(?:python|py)?\s*\n([\s\S]*)$/i);
+    if (open) t = open[1].trim();
+  }
   return t.slice(0, MAX_CODE_CHARS);
 }
 
@@ -242,7 +259,7 @@ async function analyse({ question, rows, dataset, datasetLabel, history }) {
       role: 'user',
       content: `Dataset: ${label}\nColumns (schema only):\n${JSON.stringify(cols, null, 0)}\n\nTotal rows: ${data.length}${prior}\n\nQuestion: ${q}${extra || ''}\n\nWrite the analysis code now.`,
     }],
-    maxTokens: 4000,  // enough for a full multi-step analysis without truncation
+    maxTokens: 6000,  // ample headroom so a full analysis never truncates mid-code
     temperature: 0,
   });
 

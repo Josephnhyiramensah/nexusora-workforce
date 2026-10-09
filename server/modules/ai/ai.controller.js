@@ -233,10 +233,15 @@ const excelFromUpload = asyncHandler(async (req, res) => {
 
 /* ---- In-web dashboard builder: dataset → (AI suggest) → live preview → export ---- */
 
-// GET /ai/dataset/system → flattened employee rows + column profile for the builder.
+// GET /ai/dataset/system[?dataset=key] → flattened rows + column profile for the
+// builder. Defaults to the employee roster; `dataset` selects payroll/leave/etc
+// so a Data Scientist analysis can hand its dataset straight to the builder.
 const datasetSystem = asyncHandler(async (req, res) => {
-  const rows = xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn));
-  res.json({ columns: xlsxDash.profileRows(rows), rows, source: 'system', count: rows.length });
+  const key = datasets.KEYS.includes(req.query.dataset) ? req.query.dataset : 'employees';
+  const rows = key === 'employees'
+    ? xlsxDash.rowsFromEmployees(await loadEmployees(req.tenantConn))
+    : await datasets.buildDataset(req.tenantConn, key);
+  res.json({ columns: xlsxDash.profileRows(rows), rows, source: 'system', dataset: key, count: rows.length });
 });
 
 // POST /ai/dataset/upload (multipart "file") → parsed rows + column profile.
