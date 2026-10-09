@@ -35,6 +35,7 @@ function registerAllModels(conn) {
     require('./tenant/WelfareScheme'),
     require('./tenant/Survey'),
     require('./tenant/SurveyResponse'),
+    require('./tenant/ActionItem'),
     require('./tenant/Notification'),
     require('./tenant/ExchangeRate'),
     require('./tenant/ApiKey'),

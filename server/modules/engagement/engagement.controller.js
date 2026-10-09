@@ -331,4 +331,54 @@ const trends = asyncHandler(async (req, res) => {
   res.json({ series });
 });
 
-module.exports = { listSurveys, createSurvey, getSurvey, updateSurvey, deleteSurvey, surveyResults, mySurveys, respond, trends };
+/* ------------------------------ action items ------------------------------ */
+
+// GET /engagement/actions — follow-up actions with their linked survey titles.
+const listActions = asyncHandler(async (req, res) => {
+  const ActionItem = req.tenantConn.model('ActionItem');
+  const Survey = req.tenantConn.model('Survey');
+  const items = await ActionItem.find().sort({ status: 1, dueDate: 1, createdAt: -1 }).lean();
+  const ids = [...new Set(items.filter((i) => i.surveyId).map((i) => String(i.surveyId)))];
+  const titles = {};
+  if (ids.length) { const ss = await Survey.find({ _id: { $in: ids } }).select('title').lean(); ss.forEach((s) => { titles[String(s._id)] = s.title; }); }
+  res.json({ actions: items.map((i) => ({ ...i, surveyTitle: i.surveyId ? (titles[String(i.surveyId)] || null) : null })) });
+});
+
+const createAction = asyncHandler(async (req, res) => {
+  const ActionItem = req.tenantConn.model('ActionItem');
+  const { title, detail, owner, dueDate, priority, surveyId } = req.body;
+  if (!title || !String(title).trim()) return res.status(400).json({ message: 'An action title is required.' });
+  const doc = await ActionItem.create({
+    title: String(title).trim(), detail: detail || '', owner: owner || '',
+    dueDate: dueDate ? new Date(dueDate) : null,
+    priority: ['low', 'medium', 'high'].includes(priority) ? priority : 'medium',
+    surveyId: surveyId || null, status: 'open', createdBy: req.auth.userId, createdAt: new Date(),
+  });
+  res.status(201).json({ action: doc });
+});
+
+const updateAction = asyncHandler(async (req, res) => {
+  const ActionItem = req.tenantConn.model('ActionItem');
+  const a = await ActionItem.findById(req.params.id);
+  if (!a) return res.status(404).json({ message: 'Action not found.' });
+  const { title, detail, owner, dueDate, priority, status } = req.body;
+  if (title != null) a.title = String(title).trim();
+  if (detail != null) a.detail = detail;
+  if (owner != null) a.owner = owner;
+  if (dueDate !== undefined) a.dueDate = dueDate ? new Date(dueDate) : null;
+  if (priority && ['low', 'medium', 'high'].includes(priority)) a.priority = priority;
+  if (status && ['open', 'in_progress', 'done'].includes(status)) { a.status = status; a.completedAt = status === 'done' ? new Date() : null; }
+  a.updatedAt = new Date();
+  await a.save();
+  res.json({ action: a });
+});
+
+const deleteAction = asyncHandler(async (req, res) => {
+  const ActionItem = req.tenantConn.model('ActionItem');
+  const a = await ActionItem.findById(req.params.id);
+  if (!a) return res.status(404).json({ message: 'Action not found.' });
+  await a.deleteOne();
+  res.json({ message: 'Action deleted.' });
+});
+
+module.exports = { listSurveys, createSurvey, getSurvey, updateSurvey, deleteSurvey, surveyResults, mySurveys, respond, trends, listActions, createAction, updateAction, deleteAction };

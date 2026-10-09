@@ -8,7 +8,7 @@ import {
 import { C, NUM, cap, rowStyle, td, primaryBtn, ghostBtn } from '../ui/tokens';
 import {
   Smile, ClipboardList, BarChart3, MessageSquare, Plus, Trash2, Play, Square,
-  Send, RefreshCw, Users, PieChart, Inbox, TrendingUp,
+  Send, RefreshCw, Users, PieChart, Inbox, TrendingUp, ListChecks,
 } from 'lucide-react';
 
 const WRITE_ROLES = ['super_admin', 'hr_manager', 'hr_officer'];
@@ -30,6 +30,7 @@ export default function EngagementPage() {
         { key: 'overview', label: 'Overview', Icon: TrendingUp },
         { key: 'surveys', label: 'Surveys', Icon: ClipboardList },
         { key: 'results', label: 'Results', Icon: BarChart3 },
+        { key: 'actions', label: 'Actions', Icon: ListChecks },
       ] : []),
       { key: 'answer', label: 'My surveys', Icon: MessageSquare },
     ],
@@ -40,6 +41,7 @@ export default function EngagementPage() {
       {section === 'overview' && isHR && <Overview />}
       {section === 'surveys' && isHR && <Surveys />}
       {section === 'results' && isHR && <Results />}
+      {section === 'actions' && isHR && <Actions />}
       {section === 'answer' && <AnswerSurveys />}
     </ModuleShell>
   );
@@ -415,6 +417,114 @@ function Results() {
         ))}
       </Body>
     </>
+  );
+}
+
+/* =============================== ACTIONS =============================== */
+const ACT_STATUS = { open: ['Open', 'grey'], in_progress: ['In progress', 'blue'], done: ['Done', 'green'] };
+const PRIO = { low: ['Low', 'grey'], medium: ['Medium', 'blue'], high: ['High', 'red'] };
+
+function Actions() {
+  const [actions, setActions] = useState(null);
+  const [err, setErr] = useState(''); const [banner, setBanner] = useState('');
+  const [modal, setModal] = useState(false);
+
+  async function load() { setErr(''); try { const { data } = await api.get('/engagement/actions'); setActions(data.actions || []); } catch (e) { setErr(e?.response?.data?.message || 'Could not load actions.'); } }
+  useEffect(() => { load(); }, []);
+  async function setStatus(id, status) { try { await api.patch(`/engagement/actions/${id}`, { status }); load(); } catch (e) { setErr(e?.response?.data?.message || 'Could not update.'); } }
+  async function del(id) { try { await api.delete(`/engagement/actions/${id}`); setBanner('Action deleted.'); load(); } catch (e) { setErr(e?.response?.data?.message || 'Could not delete.'); } }
+
+  const open = (actions || []).filter((a) => a.status === 'open').length;
+  const prog = (actions || []).filter((a) => a.status === 'in_progress').length;
+  const done = (actions || []).filter((a) => a.status === 'done').length;
+  const overdue = (actions || []).filter((a) => a.status !== 'done' && a.dueDate && new Date(a.dueDate) < new Date()).length;
+
+  return (
+    <>
+      <Hero crumbs={['Engagement', 'Actions']} title="Action plan"
+        actions={<HeroBtn Icon={Plus} onClick={() => setModal(true)}>New action</HeroBtn>} />
+      <KpiBand>
+        <Kpi Icon={Square} iconBg="#f2f4f8" iconColor={C.muted} label="Open" value={open} />
+        <Kpi Icon={Play} iconBg="#eaf2ff" iconColor={C.accentInk} label="In progress" value={prog} />
+        <Kpi Icon={ListChecks} iconBg="#e7f7ee" iconColor="#1f9d57" label="Done" value={done} />
+        <Kpi Icon={ClipboardList} iconBg={overdue ? '#fdecec' : '#f2f4f8'} iconColor={overdue ? C.red : C.muted} label="Overdue" value={overdue} />
+      </KpiBand>
+      <Body>
+        {banner && <Banner tone="green" onClose={() => setBanner('')}>{banner}</Banner>}
+        {err && <ErrBox>{err}</ErrBox>}
+        <Card title="Follow-up actions" right={<HeroBtn ghost Icon={RefreshCw} onClick={load}>Refresh</HeroBtn>}>
+          {!actions ? <Empty>Loading…</Empty>
+            : actions.length === 0 ? <Empty>No actions yet. Turn survey findings into owned follow-ups with “New action”.</Empty>
+              : (
+                <TableWrap head={[['Action'], ['Owner'], ['Due'], ['Priority'], ['Status'], ['', 'r']]}>
+                  {actions.map((a) => {
+                    const over = a.status !== 'done' && a.dueDate && new Date(a.dueDate) < new Date();
+                    return (
+                      <tr key={a._id} style={rowStyle}>
+                        <td style={td}><div style={{ fontWeight: 700, color: C.navy }}>{a.title}</div>{a.surveyTitle && <div style={{ fontSize: '.72rem', color: C.muted2 }}>from “{a.surveyTitle}”</div>}</td>
+                        <td style={td}>{a.owner || <span style={{ color: C.muted2 }}>—</span>}</td>
+                        <td style={td}><span style={{ color: over ? C.red : C.ink, fontWeight: over ? 700 : 400 }}>{a.dueDate ? fmtDate(a.dueDate) : '—'}</span></td>
+                        <td style={td}><StatusPill map={PRIO} k={a.priority} /></td>
+                        <td style={td}>
+                          <select value={a.status} onChange={(e) => setStatus(a._id, e.target.value)} style={{ ...qSel, fontWeight: 600 }}>
+                            <option value="open">Open</option><option value="in_progress">In progress</option><option value="done">Done</option>
+                          </select>
+                        </td>
+                        <td style={{ ...td, textAlign: 'right' }}><button onClick={() => del(a._id)} title="Delete" style={miniBtn(C.red, true)}><Trash2 size={13} /></button></td>
+                      </tr>
+                    );
+                  })}
+                </TableWrap>
+              )}
+        </Card>
+      </Body>
+      {modal && <CreateAction onClose={() => setModal(false)} onCreated={() => { setModal(false); setBanner('Action added.'); load(); }} />}
+    </>
+  );
+}
+
+function CreateAction({ onClose, onCreated }) {
+  const [title, setTitle] = useState('');
+  const [detail, setDetail] = useState('');
+  const [owner, setOwner] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [priority, setPriority] = useState('medium');
+  const [surveyId, setSurveyId] = useState('');
+  const [surveys, setSurveys] = useState([]);
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+
+  useEffect(() => { (async () => { try { const { data } = await api.get('/engagement/surveys'); setSurveys(data.surveys || []); } catch { /* optional */ } })(); }, []);
+
+  async function save() {
+    if (!title.trim()) { setErr('An action title is required.'); return; }
+    setBusy(true); setErr('');
+    try { await api.post('/engagement/actions', { title, detail, owner, dueDate: dueDate || null, priority, surveyId: surveyId || null }); onCreated(); }
+    catch (e) { setErr(e?.response?.data?.message || 'Could not create the action.'); setBusy(false); }
+  }
+
+  return (
+    <Overlay onClose={onClose} title="New action" width={560}>
+      {err && <ErrBox>{err}</ErrBox>}
+      <Field label="Title" value={title} onChange={setTitle} placeholder="e.g. Review workload in Operations" />
+      <label style={{ display: 'block', marginBottom: 12 }}><Lbl>Detail</Lbl><textarea value={detail} onChange={(e) => setDetail(e.target.value)} rows={3} style={{ ...qInp, width: '100%', resize: 'vertical' }} /></label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="Owner" value={owner} onChange={setOwner} placeholder="Name or team" />
+        <label style={{ display: 'block', marginBottom: 12 }}><Lbl>Due date</Lbl><input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} style={qInp} /></label>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Sel label="Priority" value={priority} onChange={setPriority} options={[['low', 'Low'], ['medium', 'Medium'], ['high', 'High']]} />
+        <label style={{ display: 'block', marginBottom: 12 }}><Lbl>Linked survey</Lbl>
+          <select value={surveyId} onChange={(e) => setSurveyId(e.target.value)} style={{ ...qInp, width: '100%' }}>
+            <option value="">— none —</option>
+            {surveys.map((s) => <option key={s._id} value={s._id}>{s.title}</option>)}
+          </select>
+        </label>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+        <button onClick={onClose} style={ghostBtn}>Cancel</button>
+        <button onClick={save} disabled={busy} style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }}>{busy ? 'Saving…' : 'Add action'}</button>
+      </div>
+    </Overlay>
   );
 }
 

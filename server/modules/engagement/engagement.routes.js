@@ -22,4 +22,10 @@ router.delete('/surveys/:id', authorise(...HR), c.deleteSurvey);
 router.get('/surveys/:id/results', authorise(...HR), c.surveyResults);
 router.post('/surveys/:id/respond', authorise(...SELF), c.respond);
 
+// Action planning
+router.get('/actions', authorise(...HR), c.listActions);
+router.post('/actions', authorise(...HR), c.createAction);
+router.patch('/actions/:id', authorise(...HR), c.updateAction);
+router.delete('/actions/:id', authorise(...HR), c.deleteAction);
+
 module.exports = router;
