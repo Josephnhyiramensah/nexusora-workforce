@@ -31,7 +31,7 @@ LIMIT_AS = 1536 * 1024 * 1024  # 1.5 GB address space (fits the SciPy/sklearn
 #                                mmaps + a tenant dataset; still kills multi-GB
 #                                allocation bombs with wide margin)
 LIMIT_CPU = 12                 # 12 s CPU seconds (parent also wall-clock bounds us)
-WALL_LIMIT = float(os.environ.get('SANDBOX_WALL', '15'))  # seconds, hard wall clock
+WALL_LIMIT = float(os.environ.get('SANDBOX_WALL', '30'))  # seconds, hard wall clock on USER code (parent also bounds the whole process)
 
 
 def set_limits():

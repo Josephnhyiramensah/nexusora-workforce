@@ -16,6 +16,25 @@ app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 if (env.NODE_ENV !== 'test') app.use(morgan('dev'));
+
+// Lightweight perf logger: flags slow requests and shows how much of the time
+// was tenant resolution (a DB round-trip) vs the handler. Watch the server
+// console: "[perf] 200 GET /api/employees 31240ms (tenant 15010ms)" tells you
+// the time is in the database/network, not the app code. Threshold via SLOW_MS.
+const SLOW_MS = Number(process.env.SLOW_MS || 1500);
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - t0;
+    if (ms >= SLOW_MS) {
+      const tn = req._tenantMs != null ? ` (tenant ${req._tenantMs}ms)` : '';
+      // eslint-disable-next-line no-console
+      console.warn(`[perf] ${res.statusCode} ${req.method} ${req.originalUrl} ${ms}ms${tn}`);
+    }
+  });
+  next();
+});
+
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth', authLimiter);
 app.get('/api/health', (req, res) => {

@@ -16,7 +16,7 @@ const { spawn } = require('child_process');
 const ai = require('./ai.service');
 
 const SANDBOX = path.join(__dirname, '..', 'python', 'sandbox_runner.py');
-const RUN_TIMEOUT_MS = Number(process.env.SANDBOX_TIMEOUT_MS || 20000);
+const RUN_TIMEOUT_MS = Number(process.env.SANDBOX_TIMEOUT_MS || 45000);  // cold matplotlib/sklearn import on Windows can take several seconds before analysis
 const MAX_ROWS = Number(process.env.SANDBOX_MAX_ROWS || 50000);
 const MAX_CODE_CHARS = 24000;
 
