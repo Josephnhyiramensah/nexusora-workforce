@@ -10,13 +10,20 @@ const { registerAllModels } = require('../models/registerModels');
 
 let masterConn = null;
 const tenantConns = new Map();
-// Connection tuning for a high-latency / restricted network: keep a couple of sockets
-// permanently warm so a click never waits to re-open a TLS connection to Atlas, and
-// fail server-selection in 10s instead of hanging ~30s.
+// Connection tuning for a high-latency / restricted network.
+//
+// family: 4 is the important one. On a restricted link an idle TCP socket to
+// Atlas gets dropped by NAT; the next request must reconnect, and WITHOUT this
+// the driver tries an IPv6 route first and hangs until it times out before
+// falling back to IPv4 — that is the 20–45s stall on every click. Forcing IPv4
+// removes it (this is what the Books app does, and why Books is fast on the same
+// cluster). Shorter selection/connect timeouts mean a genuine stall fails and
+// retries in ~10s instead of hanging ~30s. A warm pool avoids reopening sockets.
 const CONN_OPTS = {
-  serverSelectionTimeoutMS: 30000,   // give the slow link time to reach Atlas at startup
-  connectTimeoutMS: 30000,
-  socketTimeoutMS: 60000,
+  family: 4,                         // force IPv4 — avoids IPv6-first reconnect stalls
+  serverSelectionTimeoutMS: 10000,
+  connectTimeoutMS: 15000,
+  socketTimeoutMS: 45000,
   maxPoolSize: 10,
   minPoolSize: 1,                    // keep one warm connection so clicks don't reopen sockets
   maxIdleTimeMS: 0,                  // never idle-close it
