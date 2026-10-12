@@ -94,6 +94,7 @@ const updateTenant = asyncHandler(async (req, res) => {
   if (b.status !== undefined) t.status = b.status;
   if (b.seatsPurchased !== undefined) t.seatsPurchased = Number(b.seatsPurchased) || 0;
   if (b.billingEmail !== undefined) t.billingEmail = String(b.billingEmail).toLowerCase();
+  if (b.supportNote !== undefined) t.supportNote = String(b.supportNote);
   if (b.tax !== undefined) t.tax = { rate: Number(b.tax.rate) || 0, label: b.tax.label || 'Tax' };
   if (b.featureFlags !== undefined) {
     t.featureFlags = {
@@ -241,8 +242,182 @@ const health = asyncHandler(async (req, res) => {
   });
 });
 
+// --------------------------------------------------------------------------- //
+//  Tenant user management (reach into the tenant DB)
+// --------------------------------------------------------------------------- //
+async function tenantConnById(master, id) {
+  const t = await master.model('Tenant').findById(id).lean();
+  if (!t) return { error: 'Tenant not found', status: 404 };
+  const conn = await getTenantConnection(t.dbName);
+  return { tenant: t, conn };
+}
+
+// GET /tenants/:id/users
+const getTenantUsers = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const r = await tenantConnById(master, req.params.id);
+  if (r.error) return res.status(r.status).json({ message: r.error });
+  const users = await r.conn.model('User').find().select('name email role isActive mustChangePassword emailVerified twoFactorEnabled createdAt')
+    .sort({ createdAt: 1 }).lean();
+  res.json({ users });
+});
+
+// PUT /tenants/:id/users/:uid  — role / isActive / name / email
+const updateTenantUser = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const r = await tenantConnById(master, req.params.id);
+  if (r.error) return res.status(r.status).json({ message: r.error });
+  const User = r.conn.model('User');
+  const user = await User.findById(req.params.uid);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  const b = req.body || {};
+  if (b.role !== undefined) user.role = b.role;
+  if (b.isActive !== undefined) user.isActive = !!b.isActive;
+  if (b.name !== undefined) user.name = b.name;
+  if (b.email !== undefined) user.email = String(b.email).toLowerCase();
+  await user.save();
+  await logPlatform(master, req, 'tenant.user.update', { subdomain: r.tenant.subdomain, userId: req.params.uid, role: user.role, isActive: user.isActive });
+  res.json({ user: { id: user._id, name: user.name, email: user.email, role: user.role, isActive: user.isActive } });
+});
+
+// POST /tenants/:id/users/:uid/reset-password  — set a temporary password
+const resetTenantUserPassword = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const { newPassword } = req.body;
+  if (!newPassword || String(newPassword).length < 8) return res.status(400).json({ message: 'Password must be at least 8 characters' });
+  const r = await tenantConnById(master, req.params.id);
+  if (r.error) return res.status(r.status).json({ message: r.error });
+  const user = await r.conn.model('User').findById(req.params.uid).select('+password');
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  user.password = newPassword;
+  user.mustChangePassword = true;
+  await user.save();
+  await logPlatform(master, req, 'tenant.user.reset_password', { subdomain: r.tenant.subdomain, userId: req.params.uid });
+  res.json({ message: 'Temporary password set. The user must change it at next login.' });
+});
+
+// POST /tenants/:id/extend  { days }  — extend the current period / trial
+const extendSubscription = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const days = Math.max(1, Math.min(3650, parseInt(req.body.days, 10) || 30));
+  const t = await master.model('Tenant').findById(req.params.id);
+  if (!t) return res.status(404).json({ message: 'Tenant not found' });
+  const now = Date.now();
+  if (t.status === 'trial') {
+    const base = t.trialEndsAt ? Math.max(now, new Date(t.trialEndsAt).getTime()) : now;
+    t.trialEndsAt = new Date(base + days * 86400000);
+  } else {
+    const base = t.currentPeriodEnd ? Math.max(now, new Date(t.currentPeriodEnd).getTime()) : now;
+    t.currentPeriodEnd = new Date(base + days * 86400000);
+    t.graceEndsAt = new Date(t.currentPeriodEnd.getTime() + 7 * 86400000);
+    if (t.status === 'expired' || t.status === 'grace' || t.status === 'past_due') t.status = 'active';
+  }
+  await t.save();
+  clearTenantCache(t.subdomain);
+  await logPlatform(master, req, 'tenant.extend', { subdomain: t.subdomain, days });
+  res.json({ subdomain: t.subdomain, status: t.status, trialEndsAt: t.trialEndsAt, currentPeriodEnd: t.currentPeriodEnd });
+});
+
+// --------------------------------------------------------------------------- //
+//  Announcements (broadcast to all tenants)
+// --------------------------------------------------------------------------- //
+const broadcast = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const { title, message, type } = req.body;
+  if (!title || !message) return res.status(400).json({ message: 'Title and message are required' });
+  const tenants = await master.model('Tenant').find({ status: { $ne: 'suspended' } }).select('subdomain dbName').lean();
+  const broadcastId = `bc_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+  let sent = 0; let failed = 0; const reached = [];
+  for (const t of tenants) {
+    try {
+      const conn = await getTenantConnection(t.dbName);
+      await conn.model('Notification').create({
+        title, message, type: type || 'info', source: 'platform', audience: 'all',
+        createdByLabel: 'Nexusora', broadcastId,
+      });
+      sent += 1; reached.push(t.subdomain);
+    } catch (e) { failed += 1; console.error(`[broadcast] ${t.subdomain} failed:`, e.message); }
+  }
+  await master.model('Broadcast').create({ broadcastId, title, message, type: type || 'info', tenants: reached, sent, failed });
+  await logPlatform(master, req, 'announce.broadcast', { broadcastId, sent, failed });
+  res.json({ broadcastId, sent, failed });
+});
+
+const listAnnouncements = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const items = await master.model('Broadcast').find().sort({ at: -1 }).limit(50).lean();
+  res.json({ items });
+});
+
+// DELETE /announcements/:bid — withdraw from every tenant's bell.
+const deleteAnnouncement = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const bc = await master.model('Broadcast').findOne({ broadcastId: req.params.bid });
+  if (!bc) return res.status(404).json({ message: 'Announcement not found' });
+  const tenants = await master.model('Tenant').find({ subdomain: { $in: bc.tenants } }).select('dbName subdomain').lean();
+  for (const t of tenants) {
+    try { const conn = await getTenantConnection(t.dbName); await conn.model('Notification').deleteMany({ broadcastId: bc.broadcastId }); }
+    catch (e) { console.error(`[broadcast] withdraw ${t.subdomain} failed:`, e.message); }
+  }
+  await bc.deleteOne();
+  await logPlatform(master, req, 'announce.withdraw', { broadcastId: req.params.bid });
+  res.json({ withdrawn: true });
+});
+
+// --------------------------------------------------------------------------- //
+//  Platform settings (company / branding / smtp)
+// --------------------------------------------------------------------------- //
+async function settingsDoc(master) {
+  const PlatformSettings = master.model('PlatformSettings');
+  let doc = await PlatformSettings.findOne({ key: 'singleton' });
+  if (!doc) doc = await PlatformSettings.create({ key: 'singleton' });
+  return doc;
+}
+const getSettings = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  res.json({ settings: await settingsDoc(master) });
+});
+const updateSettings = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const doc = await settingsDoc(master);
+  const b = req.body || {};
+  if (b.company) doc.company = { ...doc.company.toObject(), ...b.company };
+  if (b.branding) doc.branding = { ...doc.branding.toObject(), ...b.branding };
+  if (b.smtp) doc.smtp = { ...doc.smtp.toObject(), ...b.smtp };
+  doc.updatedAt = new Date();
+  await doc.save();
+  await logPlatform(master, req, 'settings.update', {});
+  res.json({ settings: doc });
+});
+
+// GET /revenue — paid invoices grouped by month + currency.
+const revenue = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const paid = await master.model('Invoice').find({ status: 'paid' }).select('total currency paidAt plan subdomain').sort({ paidAt: -1 }).lean();
+  const byMonth = {};
+  for (const i of paid) {
+    const m = i.paidAt ? new Date(i.paidAt).toISOString().slice(0, 7) : 'unknown';
+    byMonth[m] = byMonth[m] || {};
+    byMonth[m][i.currency] = Math.round(((byMonth[m][i.currency] || 0) + Number(i.total || 0)) * 100) / 100;
+  }
+  res.json({ recent: paid.slice(0, 25), byMonth, count: paid.length });
+});
+
 module.exports = {
   platformLogin, createTenant, listTenants, getTenant, updateTenant,
   suspendTenant: setSuspend(true), unsuspendTenant: setSuspend(false), deleteTenant, impersonate,
+  getTenantUsers, updateTenantUser, resetTenantUserPassword, extendSubscription,
+  broadcast, listAnnouncements, deleteAnnouncement,
+  getSettings, updateSettings, revenue,
   getPricing, updatePricing, metrics, listAllInvoices, platformAudit, health,
 };

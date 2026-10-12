@@ -42,6 +42,7 @@ const schema = new mongoose.Schema({
   },
   modules: { type: [String], default: [] },
   branding: { type: mongoose.Schema.Types.Mixed, default: {} },
+  supportNote: { type: String, default: '' },      // internal note for the admin console
   createdAt: { type: Date, default: Date.now },
 }, { minimize: false, collection: 'tenants' });
 

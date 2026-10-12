@@ -77,11 +77,15 @@ function registerMasterModels(conn) {
   const Invoice = require('../models/master/Invoice');
   const Pricing = require('../models/master/Pricing');
   const AuditLog = require('../models/tenant/AuditLog');   // also used at platform level
+  const Broadcast = require('../models/master/Broadcast');
+  const PlatformSettings = require('../models/master/PlatformSettings');
   if (!conn.models.Tenant) conn.model('Tenant', Tenant.schema);
   if (!conn.models.PlatformUser) conn.model('PlatformUser', PlatformUser.schema);
   if (!conn.models.Invoice) conn.model('Invoice', Invoice.schema);
   if (!conn.models.Pricing) conn.model('Pricing', Pricing.schema);
   if (!conn.models.AuditLog) conn.model('AuditLog', AuditLog.schema);
+  if (!conn.models.Broadcast) conn.model('Broadcast', Broadcast.schema);
+  if (!conn.models.PlatformSettings) conn.model('PlatformSettings', PlatformSettings.schema);
 }
 async function getTenantConnection(dbName) {
   if (!dbName) throw new Error('getTenantConnection: dbName required');
