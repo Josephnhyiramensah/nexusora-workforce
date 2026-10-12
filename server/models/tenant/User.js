@@ -22,6 +22,14 @@ const schema = new mongoose.Schema({
   twoFactorBackupCodes: { type: [String], select: false, default: undefined },
   isActive: { type: Boolean, default: true },
   mustChangePassword: { type: Boolean, default: false },
+  // Email verification (C4). emailVerified gates self-signup activation; the
+  // token is stored hashed (sha256) and never exposed.
+  emailVerified: { type: Boolean, default: false },
+  emailVerifyToken: { type: String, select: false },
+  emailVerifyExpires: { type: Date, select: false },
+  // Password reset (C4). Hashed single-use token + expiry.
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
   createdAt: { type: Date, default: Date.now },
 }, { collection: 'users' });
 

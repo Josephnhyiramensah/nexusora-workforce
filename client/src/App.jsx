@@ -4,6 +4,9 @@ import BrandStyle from './context/BrandStyle';
 import AppShell from './components/AppShell';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
 import HomeScreen from './pages/HomeScreen';
 import EmployeesPage from './pages/EmployeesPage';
 import EmployeeProfilePage from './pages/EmployeeProfilePage';
@@ -34,6 +37,9 @@ export default function App() {
       <BrandStyle />
       <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/" element={<ProtectedRoute><HomeScreen /></ProtectedRoute>} />
       <Route path="/employees" element={<ProtectedRoute><AppShell><EmployeesPage /></AppShell></ProtectedRoute>} />
       <Route path="/employees/:id" element={<ProtectedRoute><AppShell><EmployeeProfilePage /></AppShell></ProtectedRoute>} />

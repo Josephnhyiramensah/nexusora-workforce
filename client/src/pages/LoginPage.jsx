@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getSubdomain } from '../api/client';
 
@@ -110,6 +110,11 @@ export default function LoginPage() {
                   </svg>
                 </button>
               </Field>
+              <div style={{ textAlign: 'right', margin: '-4px 0 16px' }}>
+                <Link to="/forgot-password" style={{ color: C.blue, fontWeight: 700, fontSize: '.82rem', textDecoration: 'none' }}>
+                  Forgot password?
+                </Link>
+              </div>
             </>
           )}
 

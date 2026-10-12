@@ -12,6 +12,13 @@ router.post('/login', resolveTenant, c.login);
 router.post('/2fa/login', resolveTenant, c.loginVerify);   // step 2 (public)
 router.get('/me', protect, resolveTenant, c.me);
 
+// Password reset + email verification (C4). Public, tenant-resolved; covered by
+// the /api/auth rate limiter in app.js.
+router.post('/forgot-password', resolveTenant, c.forgotPassword);
+router.post('/reset-password', resolveTenant, c.resetPassword);
+router.post('/verify-email', resolveTenant, c.verifyEmail);
+router.post('/resend-verification', protect, resolveTenant, c.resendVerification);
+
 // Own account
 router.post('/change-password', protect, resolveTenant, c.changePassword);
 router.put('/profile', protect, resolveTenant, c.updateProfile);

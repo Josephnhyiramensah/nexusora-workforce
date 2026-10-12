@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const env = require('../../config/env');
 const { signToken } = require('../../utils/generateToken');
@@ -194,6 +195,105 @@ const changePassword = asyncHandler(async (req, res) => {
   res.json({ message: 'Password changed', user: safeUser(user) });
 });
 
+// --------------------------------------------------------------------------- //
+//  Password reset + email verification (C4)
+//  Tokens are random (32 bytes) and stored hashed (sha256); only the raw token
+//  travels in the emailed link. Expiries: reset 1h, verification 24h.
+// --------------------------------------------------------------------------- //
+const RESET_TTL_MS = 60 * 60 * 1000;
+const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
+function makeToken() {
+  const raw = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.createHash('sha256').update(raw).digest('hex');
+  return { raw, hash };
+}
+function hashToken(raw) {
+  return crypto.createHash('sha256').update(String(raw)).digest('hex');
+}
+function appLink(tenant, path, raw) {
+  const base = env.APP_URL.replace(/\/+$/, '');
+  return `${base}${path}?token=${raw}&workspace=${encodeURIComponent(tenant.subdomain)}`;
+}
+
+// Generate + persist a verification token and email it. Reused by resend and by
+// A2 self-signup. Fire-and-forget email; never throws.
+async function issueEmailVerification(user, tenant) {
+  const { raw, hash } = makeToken();
+  user.emailVerifyToken = hash;
+  user.emailVerifyExpires = new Date(Date.now() + VERIFY_TTL_MS);
+  await user.save({ validateBeforeSave: false });
+  email.sendEmailVerification({
+    to: user.email, name: user.name, tenant,
+    verifyUrl: appLink(tenant, '/verify-email', raw), expiresText: 'expires in 24 hours',
+  }).catch((e) => console.error('[email] verification failed:', e && e.message));
+}
+
+// POST /api/auth/forgot-password  (public, tenant-resolved). Always returns the
+// same message so email addresses can't be probed for existence.
+const forgotPassword = asyncHandler(async (req, res) => {
+  const emailInput = String(req.body.email || '').toLowerCase().trim();
+  const generic = { message: 'If that email is registered, a reset link is on its way.' };
+  if (!emailInput) return res.json(generic);
+  const User = req.tenantConn.model('User');
+  const user = await User.findOne({ email: emailInput, isActive: true });
+  if (!user) return res.json(generic);
+  const { raw, hash } = makeToken();
+  user.resetPasswordToken = hash;
+  user.resetPasswordExpires = new Date(Date.now() + RESET_TTL_MS);
+  await user.save({ validateBeforeSave: false });
+  res.json(generic);
+  email.sendPasswordReset({
+    to: user.email, name: user.name, tenant: req.tenant,
+    resetUrl: appLink(req.tenant, '/reset-password', raw), expiresText: 'expires in 1 hour',
+  }).catch((e) => console.error('[email] reset link failed:', e && e.message));
+});
+
+// POST /api/auth/reset-password  (public, tenant-resolved). { token, password }
+const resetPassword = asyncHandler(async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ message: 'Token and new password are required' });
+  if (String(password).length < 8) return res.status(400).json({ message: 'Password must be at least 8 characters' });
+  const User = req.tenantConn.model('User');
+  const user = await User.findOne({
+    resetPasswordToken: hashToken(token),
+    resetPasswordExpires: { $gt: new Date() },
+  }).select('+password +resetPasswordToken +resetPasswordExpires');
+  if (!user) return res.status(400).json({ message: 'This reset link is invalid or has expired. Please request a new one.' });
+  user.password = password;
+  user.resetPasswordToken = undefined;
+  user.resetPasswordExpires = undefined;
+  user.mustChangePassword = false;
+  await user.save();
+  res.json({ message: 'Your password has been reset. You can now sign in.' });
+});
+
+// POST /api/auth/verify-email  (public, tenant-resolved). { token }
+const verifyEmail = asyncHandler(async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ message: 'Verification token is required' });
+  const User = req.tenantConn.model('User');
+  const user = await User.findOne({
+    emailVerifyToken: hashToken(token),
+    emailVerifyExpires: { $gt: new Date() },
+  }).select('+emailVerifyToken +emailVerifyExpires');
+  if (!user) return res.status(400).json({ message: 'This verification link is invalid or has expired.' });
+  user.emailVerified = true;
+  user.emailVerifyToken = undefined;
+  user.emailVerifyExpires = undefined;
+  await user.save({ validateBeforeSave: false });
+  res.json({ message: 'Email verified — thank you.' });
+});
+
+// POST /api/auth/resend-verification  (signed-in). Re-sends the link to self.
+const resendVerification = asyncHandler(async (req, res) => {
+  const User = req.tenantConn.model('User');
+  const user = await User.findById(req.auth.userId);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  if (user.emailVerified) return res.json({ message: 'Your email is already verified.' });
+  await issueEmailVerification(user, req.tenant);
+  res.json({ message: 'Verification email sent.' });
+});
+
 // PUT /api/auth/profile — the signed-in user edits their own name/locale.
 const updateProfile = asyncHandler(async (req, res) => {
   const { name, locale } = req.body;
@@ -208,4 +308,7 @@ const updateProfile = asyncHandler(async (req, res) => {
 module.exports = {
   login, loginVerify, me, createUser, listUsers, updateUser, setUserStatus,
   adminResetPassword, changePassword, updateProfile,
+  forgotPassword, resetPassword, verifyEmail, resendVerification,
+  // reused by A2 self-signup
+  issueEmailVerification,
 };
