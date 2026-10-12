@@ -45,6 +45,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Audit trail (C1): record authenticated mutations across all modules. Logs on
+// response finish, so it reads req.auth/req.tenantConn after the routes set them.
+app.use(require('./middleware/auditTrail').auditTrail);
+
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth', authLimiter);
 app.get('/api/health', (req, res) => {
@@ -93,6 +97,7 @@ app.use('/api/engagement', require('./modules/engagement/engagement.routes'));
 app.use('/api/notifications', require('./modules/notifications/notification.routes'));
 app.use('/api/fx', require('./modules/fx/fx.routes'));
 app.use('/api/billing', require('./modules/billing/billing.routes'));
+app.use('/api/audit', require('./modules/audit/audit.routes'));
 app.use('/api/v1', require('./modules/apikeys/externalApi.routes'));
 app.use(notFound);
 app.use(errorHandler);

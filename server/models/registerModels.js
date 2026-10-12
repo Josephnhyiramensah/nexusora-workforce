@@ -40,6 +40,7 @@ function registerAllModels(conn) {
     require('./tenant/Notification'),
     require('./tenant/ExchangeRate'),
     require('./tenant/ApiKey'),
+    require('./tenant/AuditLog'),
   ];
   for (const def of defs) {
     if (!conn.models[def.modelName]) conn.model(def.modelName, def.schema);
