@@ -140,6 +140,7 @@ const startCheckout = asyncHandler(async (req, res) => {
   const reference = `${number}-${crypto.randomBytes(4).toString('hex')}`;
   const invoice = await Invoice.create({
     number, tenant: tenant._id, subdomain: tenant.subdomain, plan,
+    interval: price.interval || 'month',
     currency: billingCurrency, items, subtotal, taxRate, tax, total,
     status: 'open', provider: 'paystack', providerRef: reference,
     dueDate: new Date(Date.now() + 7 * 86400000),
@@ -172,6 +173,89 @@ const startCheckout = asyncHandler(async (req, res) => {
   });
 });
 
+// POST /api/billing/change-plan { plan } — upgrade (prorated charge now) or
+// downgrade (scheduled for period end). Free + immediate during a trial.
+const changePlan = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const Tenant = master.model('Tenant');
+  const Invoice = master.model('Invoice');
+  const tenant = await Tenant.findById(req.tenant._id);
+  if (!tenant) return res.status(404).json({ message: 'Tenant not found' });
+
+  const target = req.body.plan;
+  if (!isValidPlan(target)) return res.status(400).json({ message: 'Unknown plan' });
+  if (target === tenant.plan && !tenant.pendingPlan) return res.status(400).json({ message: 'You are already on this plan.' });
+
+  // During a trial, switching is free and immediate.
+  if (tenant.status === 'trial') {
+    tenant.plan = target; tenant.pendingPlan = undefined;
+    await tenant.save(); clearTenantCache(tenant.subdomain);
+    return res.json({ changed: true, plan: target, effective: 'now', message: `Switched to the ${target} plan for your trial.` });
+  }
+
+  const [cur, nxt] = await Promise.all([
+    pricing.priceFor(master, tenant.plan, tenant.baseCurrency),
+    pricing.priceFor(master, target, tenant.baseCurrency),
+  ]);
+  const curPrice = cur ? Number(cur.amount) : 0;
+  const nxtPrice = nxt ? Number(nxt.amount) : 0;
+
+  // Fraction of the current paid period still remaining.
+  let remaining = 1;
+  if (tenant.currentPeriodStart && tenant.currentPeriodEnd) {
+    const span = new Date(tenant.currentPeriodEnd) - new Date(tenant.currentPeriodStart);
+    const left = new Date(tenant.currentPeriodEnd) - Date.now();
+    remaining = span > 0 ? Math.max(0, Math.min(1, left / span)) : 0;
+  }
+
+  // Downgrade (or same/cheaper): schedule for the end of the paid period.
+  if (nxtPrice <= curPrice) {
+    tenant.pendingPlan = target;
+    await tenant.save(); clearTenantCache(tenant.subdomain);
+    const when = tenant.currentPeriodEnd ? new Date(tenant.currentPeriodEnd).toLocaleDateString() : 'the next renewal';
+    return res.json({ changed: true, plan: tenant.plan, pendingPlan: target, effective: 'period_end',
+      message: `Your plan will change to ${target} on ${when}. You keep your current features until then.` });
+  }
+
+  // Upgrade: charge the prorated difference now.
+  if (!paystack.isConfigured()) return res.status(503).json({ message: 'Payments are not configured yet. Add your Paystack keys to enable upgrades.' });
+  const billingCurrency = nxt.currency;
+  const delta = round2((nxtPrice - curPrice) * remaining);
+  if (delta <= 0) {
+    tenant.plan = target; tenant.pendingPlan = undefined;
+    await tenant.save(); clearTenantCache(tenant.subdomain);
+    return res.json({ changed: true, plan: target, effective: 'now' });
+  }
+  const taxRate = Number(tenant.tax && tenant.tax.rate) || 0;
+  const tax = round2(delta * taxRate);
+  const total = round2(delta + tax);
+  const number = await nextInvoiceNumber(Invoice);
+  const reference = `${number}-${crypto.randomBytes(4).toString('hex')}`;
+  await Invoice.create({
+    number, tenant: tenant._id, subdomain: tenant.subdomain, plan: target, kind: 'proration',
+    interval: nxt.interval || 'month', currency: billingCurrency,
+    items: [{ label: `Upgrade to ${target} (prorated ${Math.round(remaining * 100)}% of period)`, qty: 1, unitAmount: delta, amount: delta }],
+    subtotal: delta, taxRate, tax, total, status: 'open', provider: 'paystack', providerRef: reference,
+    dueDate: new Date(Date.now() + 7 * 86400000),
+  });
+  const chargeCur = paystack.chargeableCurrency(billingCurrency);
+  let chargeTotal = total;
+  if (chargeCur !== billingCurrency) { const c = await fx.convert(total, billingCurrency, chargeCur); if (c.converted) chargeTotal = c.amount; }
+  const init = await paystack.initializeTransaction({
+    email: tenant.billingEmail, amountMajor: chargeTotal, currency: chargeCur, reference,
+    metadata: { subdomain: tenant.subdomain, plan: target, invoice: number, kind: 'proration' },
+    callbackUrl: `${env.APP_URL.replace(/\/+$/, '')}/settings?tab=billing&ref=${encodeURIComponent(reference)}`,
+    channels: ['card', 'mobile_money'],
+  });
+  if (!init.ok) {
+    await Invoice.updateOne({ providerRef: reference }, { $set: { status: 'void' } });
+    return res.status(502).json({ message: `Could not start payment: ${init.error}` });
+  }
+  res.json({ changed: false, requiresPayment: true, authorizationUrl: init.authorizationUrl, reference,
+    prorated: { amount: delta, total, currency: billingCurrency, remainingPct: Math.round(remaining * 100) } });
+});
+
 // Process a successful charge: mark the invoice paid, start the paid period,
 // and email a receipt. Idempotent (skips an already-paid invoice).
 async function processChargeSuccess(reference, channel) {
@@ -192,8 +276,13 @@ async function processChargeSuccess(reference, channel) {
 
   const tenant = await Tenant.findById(invoice.tenant);
   if (!tenant) return;
-  Object.assign(tenant, subscription.beginPaidPeriod(new Date(), 1));
+  const months = invoice.interval === 'year' ? 12 : 1;
+  // A proration top-up keeps the existing period; a subscription charge (re)starts it.
+  if (invoice.kind !== 'proration') Object.assign(tenant, subscription.beginPaidPeriod(new Date(), months));
+  else tenant.status = 'active';
+  // Apply the paid plan, and clear any scheduled downgrade it fulfils.
   if (invoice.plan) tenant.plan = invoice.plan;
+  if (tenant.pendingPlan && tenant.pendingPlan === invoice.plan) { tenant.pendingPlan = undefined; }
   await tenant.save();
   clearTenantCache(tenant.subdomain);
 
@@ -222,5 +311,5 @@ const webhook = (req, res) => {
 
 module.exports = {
   listPlans, checkAvailability, registerCompany,
-  getSubscription, listInvoices, startCheckout, webhook,
+  getSubscription, listInvoices, startCheckout, changePlan, webhook,
 };

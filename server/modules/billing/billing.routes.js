@@ -20,5 +20,6 @@ router.post('/webhook', c.webhook);                       // Paystack (HMAC-veri
 router.get('/subscription', protect, resolveTenant, c.getSubscription);
 router.get('/invoices', protect, resolveTenant, authorise('super_admin', 'hr_manager'), c.listInvoices);
 router.post('/checkout', protect, resolveTenant, authorise('super_admin'), c.startCheckout);
+router.post('/change-plan', protect, resolveTenant, authorise('super_admin'), c.changePlan);
 
 module.exports = router;

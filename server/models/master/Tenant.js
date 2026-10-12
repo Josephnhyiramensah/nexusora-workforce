@@ -21,6 +21,7 @@ const schema = new mongoose.Schema({
   currentPeriodEnd: { type: Date },
   graceEndsAt: { type: Date },
   seatsPurchased: { type: Number, default: 0 },   // 0 = fall back to the plan's seat limit
+  pendingPlan: { type: String },                   // scheduled downgrade, applied at period end
   billingEmail: { type: String, lowercase: true, trim: true },
   // Opaque references from the payment provider (A2). Never a card/account number.
   billing: {

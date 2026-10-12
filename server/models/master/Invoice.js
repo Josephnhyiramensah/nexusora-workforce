@@ -16,8 +16,12 @@ const schema = new mongoose.Schema({
   tenant: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true },
   subdomain: { type: String, index: true },       // denormalised for quick lookup
   plan: { type: String },
+  interval: { type: String, enum: ['month', 'year'], default: 'month' },  // billing cadence this invoice covers
   periodStart: { type: Date },
   periodEnd: { type: Date },
+  kind: { type: String, enum: ['subscription', 'proration'], default: 'subscription' },
+  lastReminderAt: { type: Date },          // dunning: last payment reminder sent
+  remindersSent: { type: Number, default: 0 },
   currency: { type: String, uppercase: true, default: 'GHS' },
   items: { type: [lineItem], default: [] },
   subtotal: { type: Number, default: 0 },

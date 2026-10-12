@@ -4,8 +4,9 @@ const jwt = require('jsonwebtoken');
 const env = require('../../config/env');
 const { signToken } = require('../../utils/generateToken');
 const { verifyTotp } = require('../../utils/twoFactor');
-const email = require('../../services/email.service');
+const emailSvc = require('../../services/email.service');
 const { resolveEntitlements } = require('../../config/plans');
+const { seatLimit } = require('../../services/subscription.service');
 
 function safeUser(u) {
   // `employee` may be a bare id or a populated doc (in listUsers). Always expose the id
@@ -108,6 +109,18 @@ const createUser = asyncHandler(async (req, res) => {
   if (String(password).length < 8) return res.status(400).json({ message: 'Password must be at least 8 characters' });
   const User = req.tenantConn.model('User');
   if (await User.findOne({ email: email.toLowerCase() })) return res.status(409).json({ message: 'Email already exists' });
+  // Seat limit (A2): block adding a user beyond the plan's seat cap.
+  const limit = seatLimit(req.tenant);
+  if (limit != null) {
+    const activeCount = await User.countDocuments({ isActive: true });
+    if (activeCount >= limit) {
+      return res.status(403).json({
+        code: 'seat_limit_reached',
+        message: `Your plan includes ${limit} seats and all are in use. Upgrade your plan or purchase more seats to add another user.`,
+        seatLimit: limit,
+      });
+    }
+  }
   const user = await User.create({
     name, email: email.toLowerCase(), password, role: role || 'employee',
     permissions: permissions || [], locale: locale || req.tenant.defaultLocale,
@@ -116,7 +129,7 @@ const createUser = asyncHandler(async (req, res) => {
   });
   res.status(201).json({ user: safeUser(user) });
   // Fire-and-forget welcome email (never blocks the response; skips if SMTP off).
-  email.sendWelcome({ to: user.email, name: user.name, tenant: req.tenant, tempPassword: password })
+  emailSvc.sendWelcome({ to: user.email, name: user.name, tenant: req.tenant, tempPassword: password })
     .catch((e) => console.error('[email] welcome failed:', e && e.message));
 });
 
@@ -173,7 +186,7 @@ const adminResetPassword = asyncHandler(async (req, res) => {
   await user.save();
   res.json({ message: 'Temporary password set. The user must change it at next login.' });
   // Fire-and-forget reset notice (never blocks the response; skips if SMTP off).
-  email.sendPasswordReset({ to: user.email, name: user.name, tenant: req.tenant, tempPassword: password, byAdmin: true })
+  emailSvc.sendPasswordReset({ to: user.email, name: user.name, tenant: req.tenant, tempPassword: password, byAdmin: true })
     .catch((e) => console.error('[email] reset notice failed:', e && e.message));
 });
 
@@ -222,7 +235,7 @@ async function issueEmailVerification(user, tenant) {
   user.emailVerifyToken = hash;
   user.emailVerifyExpires = new Date(Date.now() + VERIFY_TTL_MS);
   await user.save({ validateBeforeSave: false });
-  email.sendEmailVerification({
+  emailSvc.sendEmailVerification({
     to: user.email, name: user.name, tenant,
     verifyUrl: appLink(tenant, '/verify-email', raw), expiresText: 'expires in 24 hours',
   }).catch((e) => console.error('[email] verification failed:', e && e.message));
@@ -242,7 +255,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
   user.resetPasswordExpires = new Date(Date.now() + RESET_TTL_MS);
   await user.save({ validateBeforeSave: false });
   res.json(generic);
-  email.sendPasswordReset({
+  emailSvc.sendPasswordReset({
     to: user.email, name: user.name, tenant: req.tenant,
     resetUrl: appLink(req.tenant, '/reset-password', raw), expiresText: 'expires in 1 hour',
   }).catch((e) => console.error('[email] reset link failed:', e && e.message));

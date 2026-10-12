@@ -221,6 +221,21 @@ async function sendInvoice({ to, tenant, invoice = {}, pdf }) {
   });
 }
 
+// Dunning: a reminder that an invoice is unpaid and overdue (A2).
+async function sendPaymentReminder({ to, tenant, invoice = {}, attempt }) {
+  const cur = invoice.currency || (tenant && tenant.baseCurrency) || '';
+  const body = [
+    p(`We weren't able to confirm payment for your <b>${esc(brandOf(tenant).company)}</b> subscription.`),
+    p(`Invoice <b>${esc(invoice.number || '')}</b> — <b>${esc(money(invoice.total, cur))}</b>${invoice.dueDate ? `, due ${esc(invoice.dueDate)}` : ''}.`),
+    p(`Please complete payment to keep your workspace active. If you've already paid, you can ignore this message.`),
+    invoice.payUrl ? button(invoice.payUrl, 'Pay now') : '',
+  ].join('');
+  return deliver('dunning', tenant, {
+    to, subject: `Payment reminder — invoice ${invoice.number || ''}`.trim(),
+    html: layout({ tenant, title: 'Payment reminder', bodyHtml: body, preheader: 'Your subscription invoice is awaiting payment.' }),
+  });
+}
+
 // Survey/pulse invitation (engagement B1). `surveyUrl` is caller-built (may be a
 // tokenised per-recipient link).
 async function sendSurveyInvite({ to, name, tenant, surveyTitle, surveyUrl, closesText }) {
@@ -242,6 +257,7 @@ module.exports = {
   sendEmailVerification,
   sendPasswordReset,
   sendInvoice,
+  sendPaymentReminder,
   sendSurveyInvite,
   // exported for tests / previews
   _internal: { layout, brandOf, fromFor, money, loginUrl },
