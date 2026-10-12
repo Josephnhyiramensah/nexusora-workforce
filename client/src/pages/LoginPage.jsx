@@ -55,17 +55,19 @@ export default function LoginPage() {
       <div style={{ width: '100%', maxWidth: 400, background: '#fff', borderRadius: 22,
         overflow: 'hidden', border: `1px solid ${C.line}`, boxShadow: '0 24px 60px rgba(1,33,88,.16)' }}>
 
-        {/* Header — now white, part of one clean card */}
-        <div style={{ padding: '34px 32px 26px', textAlign: 'center', borderBottom: `1px solid #eef2f8` }}>
+        {/* Brand band — navy, matching the Nexusora product family */}
+        <div style={{ padding: '36px 32px 30px', textAlign: 'center',
+          background: `linear-gradient(135deg, ${C.navy} 0%, ${C.navy2} 55%, #0e3a86 100%)`,
+          borderBottom: `1px solid rgba(255,255,255,.08)` }}>
           <div style={{ width: 74, height: 74, margin: '0 auto 16px', borderRadius: 18,
             background: '#fff', display: 'grid', placeItems: 'center',
-            border: `1px solid ${C.line}`, boxShadow: '0 8px 22px rgba(1,33,88,.10)' }}>
+            boxShadow: '0 10px 26px rgba(0,0,0,.28)' }}>
             <img src="/logo-mark.png" alt="Nexusora Workforce" style={{ width: 52, height: 52, objectFit: 'contain' }} />
           </div>
-          <div style={{ color: C.navy, fontWeight: 800, fontSize: '1.5rem', letterSpacing: '-.01em' }}>
+          <div style={{ color: '#fff', fontWeight: 800, fontSize: '1.5rem', letterSpacing: '-.01em' }}>
             Nexusora Workforce
           </div>
-          <div style={{ color: C.muted, fontSize: '.9rem', marginTop: 6 }}>
+          <div style={{ color: 'rgba(255,255,255,.72)', fontSize: '.9rem', marginTop: 6, letterSpacing: '.01em' }}>
             People · Performance · Progress
           </div>
         </div>
