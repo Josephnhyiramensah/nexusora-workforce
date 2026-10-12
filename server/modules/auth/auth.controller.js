@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const env = require('../../config/env');
 const { signToken } = require('../../utils/generateToken');
 const { verifyTotp } = require('../../utils/twoFactor');
+const email = require('../../services/email.service');
 
 function safeUser(u) {
   // `employee` may be a bare id or a populated doc (in listUsers). Always expose the id
@@ -103,6 +104,9 @@ const createUser = asyncHandler(async (req, res) => {
     mustChangePassword: true,
   });
   res.status(201).json({ user: safeUser(user) });
+  // Fire-and-forget welcome email (never blocks the response; skips if SMTP off).
+  email.sendWelcome({ to: user.email, name: user.name, tenant: req.tenant, tempPassword: password })
+    .catch((e) => console.error('[email] welcome failed:', e && e.message));
 });
 
 // GET /api/auth/users  (optional ?employee=<id> — used to check if a person has a login)
@@ -157,6 +161,9 @@ const adminResetPassword = asyncHandler(async (req, res) => {
   user.mustChangePassword = true;
   await user.save();
   res.json({ message: 'Temporary password set. The user must change it at next login.' });
+  // Fire-and-forget reset notice (never blocks the response; skips if SMTP off).
+  email.sendPasswordReset({ to: user.email, name: user.name, tenant: req.tenant, tempPassword: password, byAdmin: true })
+    .catch((e) => console.error('[email] reset notice failed:', e && e.message));
 });
 
 // POST /api/auth/change-password — the signed-in user changes their own password.

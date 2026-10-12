@@ -22,10 +22,12 @@ function transport() {
   return _transport;
 }
 
-// sendMail({ to, subject, html, text }). `to` may be a string or string[].
-// Never throws — returns { sent } / { skipped } / { error } so callers (like a
-// background sweep) can continue regardless.
-async function sendMail({ to, subject, html, text }) {
+// sendMail({ to, subject, html, text, from?, replyTo?, cc?, bcc?, attachments? }).
+// `to` may be a string or string[]. Never throws — returns { sent } /
+// { skipped } / { error } so callers (like a background sweep or a fire-and-
+// forget hook) can continue regardless. `from` overrides the default MAIL_FROM
+// so a tenant's display name can front its own mail.
+async function sendMail({ to, subject, html, text, from, replyTo, cc, bcc, attachments }) {
   const t = transport();
   if (!t) return { skipped: true, reason: 'SMTP not configured' };
   const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
@@ -33,11 +35,15 @@ async function sendMail({ to, subject, html, text }) {
   try {
     if (!_verified) { await t.verify().catch(() => {}); _verified = true; }
     const info = await t.sendMail({
-      from: env.MAIL_FROM,
+      from: from || env.MAIL_FROM,
       to: recipients.join(', '),
+      cc: Array.isArray(cc) ? cc.join(', ') : cc || undefined,
+      bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc || undefined,
+      replyTo: replyTo || undefined,
       subject,
       text: text || (html ? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''),
       html,
+      attachments: attachments || undefined,
     });
     return { sent: true, messageId: info.messageId, accepted: info.accepted };
   } catch (e) {
