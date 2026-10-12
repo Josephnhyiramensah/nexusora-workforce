@@ -3,6 +3,9 @@ const env = require('../../config/env');
 const { getMasterConnection } = require('../../config/db');
 const { signToken } = require('../../utils/generateToken');
 const { provisionTenant } = require('../../services/provisioning.service');
+const { clearTenantCache } = require('../../middleware/tenant');
+const { isValidPlan } = require('../../config/plans');
+const pricing = require('../../services/pricing.service');
 
 // POST /api/platform/login
 const platformLogin = asyncHandler(async (req, res) => {
@@ -43,4 +46,50 @@ const listTenants = asyncHandler(async (req, res) => {
   })));
 });
 
-module.exports = { platformLogin, createTenant, listTenants };
+// GET /api/platform/pricing — editable plan prices (seeds on first read).
+const getPricing = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const docs = await pricing.ensurePricing(master);
+  res.json({ pricing: docs });
+});
+
+// PUT /api/platform/pricing/:plan — edit a plan's price (admin console).
+const updatePricing = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  if (!isValidPlan(req.params.plan)) return res.status(400).json({ message: 'Unknown plan' });
+  const Pricing = master.model('Pricing');
+  const allowed = ['baseCurrency', 'basePrice', 'seatPrice', 'interval', 'prices', 'active'];
+  const update = { updatedAt: new Date() };
+  for (const k of allowed) if (req.body[k] !== undefined) update[k] = req.body[k];
+  if (update.baseCurrency) update.baseCurrency = String(update.baseCurrency).toUpperCase();
+  const doc = await Pricing.findOneAndUpdate({ plan: req.params.plan }, { $set: update }, { new: true, upsert: true });
+  res.json({ pricing: doc });
+});
+
+// PUT /api/platform/tenants/:id — admin edits a tenant's plan/billing/flags.
+const updateTenant = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const Tenant = master.model('Tenant');
+  const t = await Tenant.findById(req.params.id);
+  if (!t) return res.status(404).json({ message: 'Tenant not found' });
+  const b = req.body || {};
+  if (b.plan !== undefined && isValidPlan(b.plan)) t.plan = b.plan;
+  if (b.status !== undefined) t.status = b.status;
+  if (b.seatsPurchased !== undefined) t.seatsPurchased = Number(b.seatsPurchased) || 0;
+  if (b.billingEmail !== undefined) t.billingEmail = String(b.billingEmail).toLowerCase();
+  if (b.tax !== undefined) t.tax = { rate: Number(b.tax.rate) || 0, label: b.tax.label || 'Tax' };
+  if (b.featureFlags !== undefined) {
+    t.featureFlags = {
+      enable: Array.isArray(b.featureFlags.enable) ? b.featureFlags.enable : [],
+      disable: Array.isArray(b.featureFlags.disable) ? b.featureFlags.disable : [],
+    };
+  }
+  await t.save();
+  clearTenantCache(t.subdomain);   // so entitlement/status changes take effect now
+  res.json({ tenant: { id: t._id, name: t.name, subdomain: t.subdomain, plan: t.plan, status: t.status, seatsPurchased: t.seatsPurchased, tax: t.tax, featureFlags: t.featureFlags } });
+});
+
+module.exports = { platformLogin, createTenant, listTenants, getPricing, updatePricing, updateTenant };

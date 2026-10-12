@@ -2,28 +2,26 @@ const asyncHandler = require('express-async-handler');
 const { getMasterConnection } = require('../../config/db');
 const { provisionTenant } = require('../../services/provisioning.service');
 const { startTrial, trialDaysLeft } = require('../../services/subscription.service');
-const { getPlan, PLAN_KEYS, MODULES, FEATURES } = require('../../config/plans');
+const { MODULES, FEATURES } = require('../../config/plans');
 const billing = require('../../config/billing');
 const emailSvc = require('../../services/email.service');
+const pricing = require('../../services/pricing.service');
 const { issueEmailVerification } = require('../auth/auth.controller');
 
-// GET /api/billing/plans — public catalog for the pricing / signup UI.
+// GET /api/billing/plans?currency=USD — public catalog. Prices are DB-backed and
+// converted into the requested currency (falls back to the base currency).
 const listPlans = asyncHandler(async (req, res) => {
-  const plans = PLAN_KEYS.map((k) => {
-    const p = getPlan(k);
-    return {
-      key: p.key, label: p.label, order: p.order, seatLimit: p.seatLimit,
-      price: p.price, seatPrice: p.seatPrice, interval: p.interval,
-      modules: p.modules, features: p.features,
-    };
-  });
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const currency = req.query.currency ? String(req.query.currency).toUpperCase() : billing.PRICING_BASE_CURRENCY;
+  const plans = await pricing.catalog(master, currency);
   res.json({
     plans,
     moduleLabels: MODULES,
     featureLabels: FEATURES,
-    billingCurrency: billing.BILLING_CURRENCY,
+    baseCurrency: billing.PRICING_BASE_CURRENCY,
     trialDays: billing.TRIAL_DAYS,
-    // false while prices are still placeholders — the client hides amounts then.
+    // false until an admin sets non-zero prices — the client hides amounts then.
     pricesConfigured: plans.some((p) => Number(p.price) > 0),
   });
 });

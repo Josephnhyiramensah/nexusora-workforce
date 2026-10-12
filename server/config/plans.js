@@ -8,9 +8,9 @@
 // tenant without changing their plan:
 //     effective = plan set  ∪  tenant.featureFlags.enable  −  tenant.featureFlags.disable
 //
-// NOTE ON PRICES: the `price`/`seatPrice` numbers below are PLACEHOLDERS pending
-// Joseph's confirmation (see the A2 billing step). Gating does not depend on
-// them; they are read only when invoices are raised.
+// Prices are NOT here — they are DB-backed and editable in the admin console
+// (models/master/Pricing.js, services/pricing.service.js), multi-currency via
+// FX. This file defines only entitlements (what each plan unlocks) + seat caps.
 
 // ---- Canonical module keys (must match the API route mounts in app.js) ------
 const MODULES = {
@@ -50,18 +50,14 @@ const FEATURES = {
 // Always available regardless of plan — the product is unusable without these.
 const CORE_MODULES = ['employees', 'org', 'positions', 'picklists', 'settings', 'documents', 'notifications'];
 
-// ---- Plans ------------------------------------------------------------------
-// seatLimit: null = unlimited. interval: billing cadence. price/seatPrice in the
-// plan's billing currency (default GHS) — PLACEHOLDER values.
+// ---- Plans (entitlements only — prices live in the Pricing model) -----------
+// seatLimit: null = unlimited.
 const PLANS = {
   starter: {
     key: 'starter',
     label: 'Starter',
     order: 1,
     seatLimit: 25,
-    price: 0,                 // PLACEHOLDER
-    seatPrice: 0,             // PLACEHOLDER
-    interval: 'month',
     modules: [...CORE_MODULES, 'attendance', 'leave', 'recruitment', 'onboarding'],
     features: [],
   },
@@ -70,9 +66,6 @@ const PLANS = {
     label: 'Professional',
     order: 2,
     seatLimit: 200,
-    price: 0,                 // PLACEHOLDER
-    seatPrice: 0,             // PLACEHOLDER
-    interval: 'month',
     modules: [...CORE_MODULES, 'attendance', 'leave', 'recruitment', 'onboarding',
       'payroll', 'performance', 'analytics', 'workforce', 'learning', 'compliance',
       'succession', 'welfare', 'engagement'],
@@ -83,9 +76,6 @@ const PLANS = {
     label: 'Enterprise',
     order: 3,
     seatLimit: null,          // unlimited
-    price: 0,                 // PLACEHOLDER
-    seatPrice: 0,             // PLACEHOLDER
-    interval: 'month',
     modules: Object.keys(MODULES),   // every module
     features: Object.keys(FEATURES), // every feature
   },

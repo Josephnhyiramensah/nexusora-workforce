@@ -28,6 +28,12 @@ const schema = new mongoose.Schema({
     customerRef: { type: String },
     subscriptionRef: { type: String },
   },
+  // Configurable tax per tenant (set to the customer's own jurisdiction in the
+  // admin console) — nothing is hardcoded to one country. rate 0.15 = 15%.
+  tax: {
+    rate: { type: Number, default: 0 },
+    label: { type: String, default: 'Tax' },      // e.g. 'VAT', 'GST', 'VAT+Levies'
+  },
   // Per-tenant entitlement overrides layered on top of the plan (C2).
   featureFlags: {
     enable: { type: [String], default: [] },

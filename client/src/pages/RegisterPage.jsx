@@ -9,7 +9,7 @@ export default function RegisterPage() {
   const navigate = useNavigate();
   const [cfg, setCfg] = useState({ countries: [], currencies: [] });
   const [plans, setPlans] = useState([]);
-  const [meta, setMeta] = useState({ trialDays: 14, billingCurrency: 'GHS', pricesConfigured: false });
+  const [meta, setMeta] = useState({ trialDays: 30, baseCurrency: 'GHS', pricesConfigured: false });
 
   const [company, setCompany] = useState('');
   const [subdomain, setSub] = useState('');
@@ -33,7 +33,7 @@ export default function RegisterPage() {
         const [{ data: config }, { data: pl }] = await Promise.all([api.get('/config'), api.get('/billing/plans')]);
         setCfg({ countries: config.countries || [], currencies: config.currencies || [] });
         setPlans((pl.plans || []).sort((a, b) => a.order - b.order));
-        setMeta({ trialDays: pl.trialDays, billingCurrency: pl.billingCurrency, pricesConfigured: pl.pricesConfigured });
+        setMeta({ trialDays: pl.trialDays, baseCurrency: pl.baseCurrency, pricesConfigured: pl.pricesConfigured });
       } catch { /* non-fatal; form still usable with defaults */ }
     })();
   }, []);
@@ -78,7 +78,7 @@ export default function RegisterPage() {
     } finally { setBusy(false); }
   }
 
-  const money = (n) => `${meta.billingCurrency} ${Number(n).toLocaleString()}`;
+  const money = (n, cur) => `${cur || meta.baseCurrency} ${Number(n).toLocaleString()}`;
 
   if (done) {
     return (
@@ -137,8 +137,8 @@ export default function RegisterPage() {
               style={{ textAlign: 'left', border: `1.5px solid ${active ? C.navy : C.line}`, background: active ? '#f4f8ff' : '#fff',
                 borderRadius: 12, padding: '12px 14px', cursor: 'pointer' }}>
               <div style={{ fontWeight: 800, color: C.navy, fontSize: '.95rem' }}>{p.label}</div>
-              {meta.pricesConfigured && Number(p.price) >= 0 && (
-                <div style={{ color: C.ink, fontSize: '.82rem', marginTop: 2 }}>{money(p.price)}<span style={{ color: C.muted }}>/{p.interval}</span></div>
+              {meta.pricesConfigured && Number(p.price) > 0 && (
+                <div style={{ color: C.ink, fontSize: '.82rem', marginTop: 2 }}>{money(p.price, p.currency)}<span style={{ color: C.muted }}>/{p.interval}</span></div>
               )}
               <div style={{ color: C.muted, fontSize: '.74rem', marginTop: 4 }}>
                 {p.seatLimit ? `Up to ${p.seatLimit} seats` : 'Unlimited seats'} · {p.modules.length} modules
