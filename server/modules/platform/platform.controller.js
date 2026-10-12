@@ -1,11 +1,24 @@
 const asyncHandler = require('express-async-handler');
 const env = require('../../config/env');
-const { getMasterConnection } = require('../../config/db');
+const { getMasterConnection, getTenantConnection, masterReady } = require('../../config/db');
 const { signToken } = require('../../utils/generateToken');
 const { provisionTenant } = require('../../services/provisioning.service');
 const { clearTenantCache } = require('../../middleware/tenant');
 const { isValidPlan } = require('../../config/plans');
 const pricing = require('../../services/pricing.service');
+const billing = require('../../config/billing');
+const audit = require('../../services/audit.service');
+const { trialDaysLeft, seatLimit } = require('../../services/subscription.service');
+const paystack = require('../../services/payments/paystack.service');
+
+// Record a platform-admin action to the master audit log (never throws).
+async function logPlatform(master, req, action, meta) {
+  audit.record(master, {
+    actor: { id: String((req.platform && req.platform.id) || ''), type: 'platform', role: 'platform_admin' },
+    action, method: req.method, path: (req.originalUrl || '').split('?')[0], statusCode: 200,
+    ip: (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip, meta: meta || {},
+  }).catch(() => {});
+}
 
 // POST /api/platform/login
 const platformLogin = asyncHandler(async (req, res) => {
@@ -65,6 +78,7 @@ const updatePricing = asyncHandler(async (req, res) => {
   for (const k of allowed) if (req.body[k] !== undefined) update[k] = req.body[k];
   if (update.baseCurrency) update.baseCurrency = String(update.baseCurrency).toUpperCase();
   const doc = await Pricing.findOneAndUpdate({ plan: req.params.plan }, { $set: update }, { new: true, upsert: true });
+  await logPlatform(master, req, 'pricing.update', { plan: req.params.plan, ...update });
   res.json({ pricing: doc });
 });
 
@@ -89,7 +103,146 @@ const updateTenant = asyncHandler(async (req, res) => {
   }
   await t.save();
   clearTenantCache(t.subdomain);   // so entitlement/status changes take effect now
+  await logPlatform(master, req, 'tenant.update', { subdomain: t.subdomain, plan: t.plan, status: t.status });
   res.json({ tenant: { id: t._id, name: t.name, subdomain: t.subdomain, plan: t.plan, status: t.status, seatsPurchased: t.seatsPurchased, tax: t.tax, featureFlags: t.featureFlags } });
 });
 
-module.exports = { platformLogin, createTenant, listTenants, getPricing, updatePricing, updateTenant };
+// GET /api/platform/tenants/:id — full detail incl. usage + recent invoices.
+const getTenant = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const t = await master.model('Tenant').findById(req.params.id).lean();
+  if (!t) return res.status(404).json({ message: 'Tenant not found' });
+  const usage = { users: null, employees: null };
+  try {
+    const conn = await getTenantConnection(t.dbName);
+    usage.users = await conn.model('User').countDocuments({ isActive: true });
+    usage.employees = await conn.model('Employee').countDocuments({});
+  } catch (e) { /* tenant DB unreachable — leave counts null */ }
+  const invoices = await master.model('Invoice').find({ subdomain: t.subdomain }).sort({ createdAt: -1 }).limit(20).lean();
+  res.json({ tenant: t, usage, invoices, trialDaysLeft: trialDaysLeft(t), seatLimit: seatLimit(t) });
+});
+
+// POST /api/platform/tenants/:id/suspend  &  /unsuspend
+const setSuspend = (suspend) => asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const t = await master.model('Tenant').findById(req.params.id);
+  if (!t) return res.status(404).json({ message: 'Tenant not found' });
+  t.status = suspend ? 'suspended' : 'active';
+  await t.save();
+  clearTenantCache(t.subdomain);
+  await logPlatform(master, req, suspend ? 'tenant.suspend' : 'tenant.unsuspend', { subdomain: t.subdomain });
+  res.json({ id: t._id, subdomain: t.subdomain, status: t.status });
+});
+
+// DELETE /api/platform/tenants/:id — remove the registry entry. The tenant DB is
+// left intact (data preserved); dropping it is a deliberate manual step.
+const deleteTenant = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const t = await master.model('Tenant').findById(req.params.id);
+  if (!t) return res.status(404).json({ message: 'Tenant not found' });
+  const sub = t.subdomain;
+  await t.deleteOne();
+  clearTenantCache(sub);
+  await logPlatform(master, req, 'tenant.delete', { subdomain: sub });
+  res.json({ deleted: true, subdomain: sub, note: 'Registry entry removed. The tenant database was left intact.' });
+});
+
+// POST /api/platform/tenants/:id/impersonate — "login as". Issues a tenant
+// session token for that tenant's super_admin (or a named user).
+const impersonate = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const t = await master.model('Tenant').findById(req.params.id);
+  if (!t) return res.status(404).json({ message: 'Tenant not found' });
+  let user;
+  try {
+    const conn = await getTenantConnection(t.dbName);
+    const User = conn.model('User');
+    user = req.body.userId
+      ? await User.findById(req.body.userId)
+      : await User.findOne({ role: 'super_admin', isActive: true }).sort({ createdAt: 1 });
+  } catch (e) { return res.status(503).json({ message: 'Tenant database unreachable' }); }
+  if (!user) return res.status(404).json({ message: 'No admin user to impersonate in this tenant' });
+  const token = signToken({ userId: user._id, tenant: t.subdomain, role: user.role, permissions: user.permissions || [], impersonated: true });
+  await logPlatform(master, req, 'tenant.impersonate', { subdomain: t.subdomain, userId: String(user._id) });
+  res.json({ token, subdomain: t.subdomain, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+});
+
+// GET /api/platform/metrics — overview for the console dashboard.
+const metrics = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const Tenant = master.model('Tenant');
+  const Invoice = master.model('Invoice');
+  const tenants = await Tenant.find().select('name subdomain plan status createdAt').lean();
+  const byStatus = {}; const byPlan = {};
+  for (const t of tenants) { byStatus[t.status] = (byStatus[t.status] || 0) + 1; byPlan[t.plan] = (byPlan[t.plan] || 0) + 1; }
+  const recent = [...tenants].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 6)
+    .map((t) => ({ name: t.name, subdomain: t.subdomain, plan: t.plan, status: t.status, createdAt: t.createdAt }));
+
+  const paid = await Invoice.find({ status: 'paid' }).select('total currency').lean();
+  const paidByCurrency = {};
+  for (const i of paid) paidByCurrency[i.currency] = Math.round(((paidByCurrency[i.currency] || 0) + Number(i.total || 0)) * 100) / 100;
+  const openInvoices = await Invoice.countDocuments({ status: 'open' });
+
+  // MRR estimate in the base currency from paying tenants' plan prices.
+  const base = billing.PRICING_BASE_CURRENCY;
+  const cat = await pricing.catalog(master, base);
+  const planPrice = Object.fromEntries(cat.map((p) => [p.key, { price: Number(p.price) || 0, interval: p.interval }]));
+  let mrr = 0;
+  for (const t of tenants) {
+    if (['active', 'grace', 'past_due'].includes(t.status)) {
+      const pp = planPrice[t.plan];
+      if (pp) mrr += pp.interval === 'year' ? pp.price / 12 : pp.price;
+    }
+  }
+  res.json({
+    tenants: { total: tenants.length, byStatus, byPlan, recent },
+    billing: { paidInvoices: paid.length, paidTotalByCurrency: paidByCurrency, openInvoices, mrrEstimate: Math.round(mrr * 100) / 100, baseCurrency: base },
+  });
+});
+
+// GET /api/platform/invoices — billing oversight across all tenants.
+const listAllInvoices = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const filter = {};
+  if (req.query.subdomain) filter.subdomain = String(req.query.subdomain).toLowerCase();
+  if (req.query.status) filter.status = String(req.query.status);
+  const items = await master.model('Invoice').find(filter).sort({ createdAt: -1 }).limit(200).lean();
+  res.json({ items });
+});
+
+// GET /api/platform/audit — platform-admin action log (master).
+const platformAudit = asyncHandler(async (req, res) => {
+  const master = getMasterConnection();
+  if (!master) return res.status(503).json({ message: 'Registry unavailable' });
+  const AuditLog = master.model('AuditLog');
+  const filter = { 'actor.type': 'platform' };
+  if (req.query.action) filter.action = new RegExp('^' + String(req.query.action).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
+  const items = await AuditLog.find(filter).sort({ at: -1 }).limit(limit).lean();
+  res.json({ items });
+});
+
+// GET /api/platform/health — system health for the console.
+const health = asyncHandler(async (req, res) => {
+  res.json({
+    ok: true,
+    uptimeSec: Math.round(process.uptime()),
+    masterDb: masterReady() ? 'connected' : 'down',
+    node: process.version,
+    env: env.NODE_ENV,
+    paymentsEnabled: paystack.isConfigured(),
+    time: new Date().toISOString(),
+  });
+});
+
+module.exports = {
+  platformLogin, createTenant, listTenants, getTenant, updateTenant,
+  suspendTenant: setSuspend(true), unsuspendTenant: setSuspend(false), deleteTenant, impersonate,
+  getPricing, updatePricing, metrics, listAllInvoices, platformAudit, health,
+};

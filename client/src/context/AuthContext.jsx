@@ -16,6 +16,18 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let active = true;
     (async () => {
+      // Support impersonation ("login as") from the admin console: a one-time
+      // token in the URL starts a session, then the param is scrubbed.
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const imp = params.get('impersonate');
+        if (imp) {
+          const ws = params.get('workspace');
+          if (ws) setSubdomain(String(ws).toLowerCase());
+          setToken(imp);
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      } catch { /* ignore */ }
       if (!getToken()) { setLoading(false); return; }
       try {
         const { data } = await api.get('/auth/me');
