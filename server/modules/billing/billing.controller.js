@@ -84,6 +84,7 @@ const getSubscription = asyncHandler(async (req, res) => {
   const t = req.tenant;
   res.json({
     plan: t.plan,
+    pendingPlan: t.pendingPlan || null,
     status: t.status || 'active',
     trialEndsAt: t.trialEndsAt || null,
     trialDaysLeft: trialDaysLeft(t),

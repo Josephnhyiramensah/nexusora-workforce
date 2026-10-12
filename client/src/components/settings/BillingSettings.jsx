@@ -48,13 +48,24 @@ export default function BillingSettings({ setMsg }) {
   // Returning from a Paystack checkout — the webhook does activation; refresh.
   useEffect(() => { if (params.get('ref')) setMsg?.('Payment received — your subscription will update shortly.'); /* eslint-disable-next-line */ }, []);
 
-  async function subscribe(plan) {
+  // On a paid plan → switch via change-plan (proration/downgrade). Otherwise
+  // (trial/expired) → a fresh checkout to start the subscription.
+  const onPaidPlan = ['active', 'grace', 'past_due'].includes(sub?.status);
+
+  async function choosePlan(plan) {
     setBusyPlan(plan); setMsg?.('');
     try {
-      const { data } = await api.post('/billing/checkout', { plan });
-      if (data.authorizationUrl) window.location.href = data.authorizationUrl;
+      if (onPaidPlan && plan !== sub?.plan) {
+        const { data } = await api.post('/billing/change-plan', { plan });
+        if (data.requiresPayment && data.authorizationUrl) { window.location.href = data.authorizationUrl; return; }
+        setMsg?.(data.message || 'Plan updated.');
+        await load();
+      } else {
+        const { data } = await api.post('/billing/checkout', { plan });
+        if (data.authorizationUrl) window.location.href = data.authorizationUrl;
+      }
     } catch (e) {
-      setMsg?.(e?.response?.data?.message || 'Could not start checkout.');
+      setMsg?.(e?.response?.data?.message || 'Could not update your plan.');
     } finally { setBusyPlan(''); }
   }
 
@@ -80,6 +91,11 @@ export default function BillingSettings({ setMsg }) {
           <Fact label="Seats" value={sub?.seatLimit ? `${sub.seatsPurchased || 0} / ${sub.seatLimit}` : 'Unlimited'} />
           {sub?.tax?.rate > 0 && <Fact label={sub.tax.label || 'Tax'} value={`${(sub.tax.rate * 100).toFixed(1)}%`} />}
         </div>
+        {sub?.pendingPlan && (
+          <div style={{ marginTop: 14, background: '#eaf2ff', border: '1px solid #cfe0ff', color: C.navy, borderRadius: 10, padding: '10px 14px', fontSize: '.86rem' }}>
+            Scheduled change: your plan switches to <b>{plans.find((p) => p.key === sub.pendingPlan)?.label || sub.pendingPlan}</b> at the end of the current period.
+          </div>
+        )}
         {!sub?.paymentsEnabled && (
           <div style={{ marginTop: 16, background: '#fff5e6', border: '1px solid #ffe0ad', color: '#8a5a00', borderRadius: 10, padding: '10px 14px', fontSize: '.86rem' }}>
             Online payments aren't switched on yet{isAdmin ? ' — add your Paystack keys to enable checkout.' : '. Contact your administrator.'}
@@ -94,9 +110,17 @@ export default function BillingSettings({ setMsg }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             {plans.map((p) => {
               const current = p.key === sub?.plan;
+              const curOrder = plans.find((x) => x.key === sub?.plan)?.order ?? 0;
+              const isUpgrade = p.order > curOrder;
+              const needsPay = current || isUpgrade;        // downgrade is scheduled, no payment
+              const unpriced = Number(p.price) <= 0;
+              const blocked = busyPlan === p.key || (needsPay && (!sub?.paymentsEnabled || unpriced));
+              const label = busyPlan === p.key ? 'Working…'
+                : current ? (onPaidPlan ? 'Renew' : 'Choose plan')
+                : isUpgrade ? 'Upgrade' : 'Downgrade';
               return (
                 <div key={p.key} style={{ border: `1.5px solid ${current ? C.navy : C.line}`, borderRadius: 12, padding: 16, background: current ? '#f4f8ff' : '#fff' }}>
-                  <div style={{ fontWeight: 800, color: C.navy }}>{p.label}</div>
+                  <div style={{ fontWeight: 800, color: C.navy }}>{p.label}{current && <span style={{ color: C.muted, fontWeight: 600, fontSize: '.72rem' }}> · current</span>}</div>
                   <div style={{ color: C.ink, fontSize: '.95rem', margin: '6px 0' }}>
                     {Number(p.price) > 0 ? <>{money(p.price, p.currency)}<span style={{ color: C.muted, fontWeight: 400 }}>/{p.interval}</span></> : <span style={{ color: C.muted }}>Not priced yet</span>}
                   </div>
@@ -104,13 +128,12 @@ export default function BillingSettings({ setMsg }) {
                     {p.seatLimit ? `Up to ${p.seatLimit} seats` : 'Unlimited seats'} · {p.modules.length} modules
                   </div>
                   <button
-                    onClick={() => subscribe(p.key)}
-                    disabled={!sub?.paymentsEnabled || Number(p.price) <= 0 || busyPlan === p.key}
+                    onClick={() => choosePlan(p.key)}
+                    disabled={blocked}
                     style={{ width: '100%', padding: '10px', borderRadius: 10, border: current ? `1px solid ${C.navy}` : 'none',
                       background: current ? '#fff' : `linear-gradient(90deg, ${C.navy}, ${C.blue})`, color: current ? C.navy : '#fff',
-                      fontWeight: 700, fontSize: '.88rem', cursor: (!sub?.paymentsEnabled || Number(p.price) <= 0) ? 'not-allowed' : 'pointer',
-                      opacity: (!sub?.paymentsEnabled || Number(p.price) <= 0) ? 0.55 : 1 }}>
-                    {busyPlan === p.key ? 'Starting…' : current ? 'Renew' : 'Choose plan'}
+                      fontWeight: 700, fontSize: '.88rem', cursor: blocked ? 'not-allowed' : 'pointer', opacity: blocked ? 0.55 : 1 }}>
+                    {label}
                   </button>
                 </div>
               );
