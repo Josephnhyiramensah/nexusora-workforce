@@ -13,7 +13,26 @@ const schema = new mongoose.Schema({
   defaultLocale: { type: String, default: DEFAULT_LOCALE, validate: { validator: isSupportedLocale, message: 'Unsupported locale' } },
   enabledLocales: { type: [String], default: [DEFAULT_LOCALE] },
   plan: { type: String, enum: ['starter', 'professional', 'enterprise'], default: 'starter' },
-  status: { type: String, enum: ['active', 'suspended', 'trial', 'expired'], default: 'trial' },
+  // Subscription lifecycle (A2). trial → active → past_due → grace → expired;
+  // suspended is an admin action. Enforced by requireActiveSubscription (C2).
+  status: { type: String, enum: ['active', 'trial', 'past_due', 'grace', 'suspended', 'expired'], default: 'trial' },
+  trialEndsAt: { type: Date },
+  currentPeriodStart: { type: Date },
+  currentPeriodEnd: { type: Date },
+  graceEndsAt: { type: Date },
+  seatsPurchased: { type: Number, default: 0 },   // 0 = fall back to the plan's seat limit
+  billingEmail: { type: String, lowercase: true, trim: true },
+  // Opaque references from the payment provider (A2). Never a card/account number.
+  billing: {
+    provider: { type: String },                   // 'paystack' | 'flutterwave' | ...
+    customerRef: { type: String },
+    subscriptionRef: { type: String },
+  },
+  // Per-tenant entitlement overrides layered on top of the plan (C2).
+  featureFlags: {
+    enable: { type: [String], default: [] },
+    disable: { type: [String], default: [] },
+  },
   modules: { type: [String], default: [] },
   branding: { type: mongoose.Schema.Types.Mixed, default: {} },
   createdAt: { type: Date, default: Date.now },

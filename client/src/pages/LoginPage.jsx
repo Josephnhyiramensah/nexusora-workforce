@@ -171,6 +171,13 @@ export default function LoginPage() {
             </>
           )}
 
+          {stage === 'creds' && (
+            <div style={{ textAlign: 'center', marginTop: 18 }}>
+              <span style={{ color: C.muted, fontSize: '.85rem' }}>New to Nexusora? </span>
+              <Link to="/register" style={{ color: C.blue, fontWeight: 700, fontSize: '.85rem', textDecoration: 'none' }}>Create a workspace</Link>
+            </div>
+          )}
+
           <div style={{ textAlign: 'center', color: C.muted, fontSize: '.78rem', marginTop: 18 }}>
             Powered by Nexusora Technologies · © 2025
           </div>

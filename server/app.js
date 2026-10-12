@@ -90,6 +90,7 @@ app.use('/api/welfare', require('./modules/welfare/welfare.routes'));
 app.use('/api/engagement', require('./modules/engagement/engagement.routes'));
 app.use('/api/notifications', require('./modules/notifications/notification.routes'));
 app.use('/api/fx', require('./modules/fx/fx.routes'));
+app.use('/api/billing', require('./modules/billing/billing.routes'));
 app.use('/api/v1', require('./modules/apikeys/externalApi.routes'));
 app.use(notFound);
 app.use(errorHandler);

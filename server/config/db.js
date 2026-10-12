@@ -74,8 +74,10 @@ function masterReady() { return !!masterConn && masterConn.readyState === 1; }
 function registerMasterModels(conn) {
   const Tenant = require('../models/master/Tenant');
   const PlatformUser = require('../models/master/PlatformUser');
+  const Invoice = require('../models/master/Invoice');
   if (!conn.models.Tenant) conn.model('Tenant', Tenant.schema);
   if (!conn.models.PlatformUser) conn.model('PlatformUser', PlatformUser.schema);
+  if (!conn.models.Invoice) conn.model('Invoice', Invoice.schema);
 }
 async function getTenantConnection(dbName) {
   if (!dbName) throw new Error('getTenantConnection: dbName required');
