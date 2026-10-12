@@ -41,7 +41,7 @@ const list = asyncHandler(async (req, res) => {
   const pg = Math.max(1, parseInt(page, 10) || 1);
   const lim = Math.min(500, Math.max(1, parseInt(limit, 10) || 50));
   const [items, total] = await Promise.all([
-    Attendance.find(filter).populate('employee', 'firstName lastName staffId').sort({ date: -1 }).skip((pg - 1) * lim).limit(lim),
+    Attendance.find(filter).populate('employee', 'firstName lastName staffId').sort({ date: -1 }).skip((pg - 1) * lim).limit(lim).lean(),
     Attendance.countDocuments(filter),
   ]);
   res.json({ items, total, page: pg, pages: Math.ceil(total / lim) || 1 });

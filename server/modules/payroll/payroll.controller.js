@@ -89,7 +89,7 @@ const createRun = asyncHandler(async (req, res) => {
 
 // GET /api/payroll/runs
 const listRuns = asyncHandler(async (req, res) => {
-  const runs = await req.tenantConn.model('PayrollRun').find().sort({ createdAt: -1 }).select('-payslips');
+  const runs = await req.tenantConn.model('PayrollRun').find().sort({ createdAt: -1 }).select('-payslips').lean();
   res.json(runs);
 });
 

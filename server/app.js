@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
@@ -12,6 +13,13 @@ const { listCurrencies } = require('./config/currencies');
 const { listPacks } = require('./compliance/registry');
 const app = express();
 app.use(helmet());
+// gzip/deflate the API — the biggest single win on a slow link. Compresses any
+// response over ~1KB; clients that send `x-no-compression` opt out. (Brotli is
+// best terminated at the reverse proxy / CDN in production.)
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => (req.headers['x-no-compression'] ? false : compression.filter(req, res)),
+}));
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());

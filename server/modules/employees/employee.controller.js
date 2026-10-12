@@ -77,8 +77,14 @@ const list = asyncHandler(async (req, res) => {
   }
   const pg = Math.max(1, parseInt(page, 10) || 1);
   const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
+  // Trim the payload to what list/picker/org-chart views actually read; the heavy
+  // sub-docs (compensation, payment, statutory, next-of-kin, education, custom)
+  // are fetched on the profile view instead. `?fields=full` returns everything.
+  const LIST_FIELDS = 'staffId firstName lastName preferredName email photo status createdAt employment';
+  let query = Employee.find(filter).sort({ createdAt: -1 }).skip((pg - 1) * lim).limit(lim).lean();
+  if (req.query.fields !== 'full') query = query.select(LIST_FIELDS);
   const [items, total] = await Promise.all([
-    Employee.find(filter).sort({ createdAt: -1 }).skip((pg - 1) * lim).limit(lim),
+    query,
     Employee.countDocuments(filter),
   ]);
   res.json({ items, total, page: pg, pages: Math.ceil(total / lim) || 1 });
