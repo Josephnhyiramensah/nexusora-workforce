@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorise } = require('../../middleware/auth');
 const { resolveTenant } = require('../../middleware/tenant');
+const { attachEntitlements, requireModule, requireFeature } = require('../../middleware/entitlements');
 const c = require('./engagement.controller');
 
 // HR manages surveys & sees results; any signed-in employee can answer.
 const HR = ['super_admin', 'hr_manager', 'hr_officer'];
 const SELF = ['super_admin', 'hr_manager', 'hr_officer', 'line_manager', 'payroll_officer', 'ir_officer', 'employee', 'viewer'];
 
-router.use(protect, resolveTenant);
+router.use(protect, resolveTenant, attachEntitlements, requireFeature('engagement_surveys'));
 
 // Self-service "me" routes before '/:id' so 'me' isn't captured as an id.
 router.get('/me/surveys', authorise(...SELF), c.mySurveys);

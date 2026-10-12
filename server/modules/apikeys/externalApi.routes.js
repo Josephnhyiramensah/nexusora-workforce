@@ -10,9 +10,11 @@ const express = require('express');
 const router = express.Router();
 const asyncHandler = require('express-async-handler');
 const { resolveTenant } = require('../../middleware/tenant');
+const { attachEntitlements, requireFeature } = require('../../middleware/entitlements');
 const { authenticateApiKey, requireScope } = require('./apikey.controller');
 
 router.use(resolveTenant);
+router.use(attachEntitlements, requireFeature('external_api'));
 router.use(authenticateApiKey);
 
 const empProjection = 'staffId firstName lastName email employment.department employment.grade employment.employmentType status createdAt';

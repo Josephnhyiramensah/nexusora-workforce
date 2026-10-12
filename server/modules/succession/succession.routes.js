@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorise } = require('../../middleware/auth');
 const { resolveTenant } = require('../../middleware/tenant');
+const { attachEntitlements, requireModule, requireFeature } = require('../../middleware/entitlements');
 const c = require('./succession.controller');
 
 // Talent & succession is sensitive (calibration data) — HR + managers only, no self-service.
 const READ = ['super_admin', 'hr_manager', 'hr_officer', 'line_manager', 'viewer'];
 const WRITE = ['super_admin', 'hr_manager', 'hr_officer'];
 
-router.use(protect, resolveTenant);
+router.use(protect, resolveTenant, attachEntitlements, requireModule('succession'));
 
 router.get('/overview', authorise(...READ), c.overview);
 

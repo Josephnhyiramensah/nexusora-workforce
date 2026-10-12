@@ -43,8 +43,25 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
+  // Plan-based entitlements (C2). Derived from the tenant payload; default to an
+  // empty grant so gates fail closed while the session is still loading.
+  const entitlements = tenant?.entitlements || { plan: null, planLabel: '', modules: [], features: [], seatLimit: null };
+  const subscription = tenant?.subscription || { status: 'active' };
+  const hasModule = useCallback((key) => entitlements.modules.includes(key), [entitlements]);
+  const hasFeature = useCallback((key) => entitlements.features.includes(key), [entitlements]);
+  // canAccess({ module } | { feature }) — tiles/routes with no `requires` are always allowed.
+  const canAccess = useCallback((requires) => {
+    if (!requires) return true;
+    if (requires.module) return entitlements.modules.includes(requires.module);
+    if (requires.feature) return entitlements.features.includes(requires.feature);
+    return true;
+  }, [entitlements]);
+
   return (
-    <AuthContext.Provider value={{ user, tenant, loading, login, verifyTwoFactor, logout }}>
+    <AuthContext.Provider value={{
+      user, tenant, loading, login, verifyTwoFactor, logout,
+      entitlements, subscription, hasModule, hasFeature, canAccess,
+    }}>
       {children}
     </AuthContext.Provider>
   );

@@ -104,7 +104,8 @@
       "ai": "Workforce Intelligence",
       "settings": "Settings",
       "engagement": "Engagement"
-    }
+    },
+    "locked": "Not included in your plan — upgrade to unlock"
   },
   "sections": {
     "workforce": "Workforce",

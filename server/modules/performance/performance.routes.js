@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorise } = require('../../middleware/auth');
 const { resolveTenant } = require('../../middleware/tenant');
+const { attachEntitlements, requireModule, requireFeature } = require('../../middleware/entitlements');
 const c = require('./performance.controller');
 
 const READ = ['super_admin', 'hr_manager', 'hr_officer', 'line_manager', 'viewer'];
 const REVIEW_WRITE = ['super_admin', 'hr_manager', 'hr_officer', 'line_manager'];
 const CYCLE_WRITE = ['super_admin', 'hr_manager', 'hr_officer'];
 
-router.use(protect, resolveTenant);
+router.use(protect, resolveTenant, attachEntitlements, requireModule('performance'));
 
 // Cycles
 router.get('/cycles', authorise(...READ), c.listCycles);

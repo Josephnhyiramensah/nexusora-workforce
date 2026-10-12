@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const { protect, authorise } = require('../../middleware/auth');
 const { resolveTenant } = require('../../middleware/tenant');
+const { attachEntitlements, requireModule, requireFeature } = require('../../middleware/entitlements');
 const c = require('./welfare.controller');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -11,7 +12,7 @@ const READ = ['super_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'lin
 const WRITE = ['super_admin', 'hr_manager', 'hr_officer', 'payroll_officer'];
 const APPROVE = ['super_admin', 'hr_manager'];
 
-router.use(protect, resolveTenant);
+router.use(protect, resolveTenant, attachEntitlements, requireModule('welfare'));
 
 router.get('/overview', authorise(...READ), c.overview);
 

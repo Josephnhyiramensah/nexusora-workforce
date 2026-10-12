@@ -103,7 +103,8 @@
       "ai": "Intelligence des effectifs",
       "settings": "Paramètres",
       "engagement": "Engagement"
-    }
+    },
+    "locked": "Non inclus dans votre offre — mettez à niveau pour débloquer"
   },
   "sections": {
     "workforce": "Effectifs",

@@ -4,6 +4,7 @@ const env = require('../../config/env');
 const { signToken } = require('../../utils/generateToken');
 const { verifyTotp } = require('../../utils/twoFactor');
 const email = require('../../services/email.service');
+const { resolveEntitlements } = require('../../config/plans');
 
 function safeUser(u) {
   // `employee` may be a bare id or a populated doc (in listUsers). Always expose the id
@@ -23,6 +24,15 @@ function tenantInfo(t) {
     name: t.name, subdomain: t.subdomain, countryCode: t.countryCode, baseCurrency: t.baseCurrency,
     defaultLocale: t.defaultLocale, enabledLocales: t.enabledLocales, plan: t.plan, modules: t.modules,
     branding: t.branding || {},   // letterhead / logo / company details — used on every printed report
+    // Plan-based entitlements (C2) — the client gates modules/features off this.
+    entitlements: resolveEntitlements(t),
+    subscription: {
+      status: t.status || 'active',
+      trialEndsAt: t.trialEndsAt || null,
+      currentPeriodEnd: t.currentPeriodEnd || null,
+      graceEndsAt: t.graceEndsAt || null,
+      seatLimit: resolveEntitlements(t).seatLimit,
+    },
   };
 }
 

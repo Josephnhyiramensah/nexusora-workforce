@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const { protect, authorise } = require('../../middleware/auth');
 const { resolveTenant } = require('../../middleware/tenant');
+const { attachEntitlements, requireModule, requireFeature } = require('../../middleware/entitlements');
 const c = require('./ai.controller');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -10,7 +11,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 
 // AI Advisor exposes company-wide analytics — management / HR roles only.
 const READ = ['super_admin', 'hr_manager', 'hr_officer', 'line_manager', 'viewer'];
 
-router.use(protect, resolveTenant);
+router.use(protect, resolveTenant, attachEntitlements, requireFeature('workforce_intelligence'));
 
 router.get('/status', authorise(...READ), c.status);
 router.post('/insights', authorise(...READ), c.insights);

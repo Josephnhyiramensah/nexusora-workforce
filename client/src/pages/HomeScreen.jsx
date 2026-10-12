@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Users, CalendarDays, TriangleAlert, UserCheck, Globe, X, Settings, LogOut, ChevronDown } from 'lucide-react';
+import { Search, Users, CalendarDays, TriangleAlert, UserCheck, Globe, X, Settings, LogOut, ChevronDown, Lock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLocale } from '../context/LocaleContext';
 import api from '../api/client';
@@ -14,7 +14,7 @@ const cap = (s) => s ? String(s).charAt(0).toUpperCase() + String(s).slice(1).re
 const initialsOf = (n) => String(n || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() || '?';
 
 export default function HomeScreen() {
-  const { user, tenant, logout } = useAuth();
+  const { user, tenant, logout, canAccess } = useAuth();
   const { t, locale, setLocale, locales } = useLocale();
   const navigate = useNavigate();
   const [stats, setStats] = useState({ employees: '—', pending: '—', lost: '—' });
@@ -169,7 +169,7 @@ export default function HomeScreen() {
               <div key={g.title} className="nx-home-panel">
                 <div style={{ fontSize: '.7rem', letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted, fontWeight: 700, marginBottom: 12 }}>{g.titleKey ? t(g.titleKey) : g.title}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(122px, 1fr))', gap: 12 }}>
-                  {g.items.map((it) => <Tile key={it.key} item={it} tr={t} />)}
+                  {g.items.map((it) => <Tile key={it.key} item={it} tr={t} locked={!canAccess(it.requires)} />)}
                 </div>
               </div>
             ))}
@@ -186,27 +186,36 @@ export default function HomeScreen() {
 const menuItem = { width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 15px', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', fontSize: '.85rem', fontWeight: 600, color: '#16233b', fontFamily: 'inherit' };
 
 const NoIcon = () => null;
-function Tile({ item, tr }) {
+function Tile({ item, tr, locked = false }) {
   const Icon = item.Icon || item.icon || NoIcon;
   const accent = item.accent || '#3485E9';
-  const live = item.live !== false && !!item.to;
+  const live = item.live !== false && !!item.to && !locked;
   const label = item.labelKey ? tr(item.labelKey) : item.label;
   const subtitle = item.subtitleKey ? tr(item.subtitleKey) : item.subtitle;
   const body = (
     <>
-      <span style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: accent, borderRadius: '13px 13px 0 0' }} />
-      <div style={{ width: 42, height: 42, borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 10, background: hexA(accent, 0.12), color: accent }}>
+      <span style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: locked ? '#c3ccda' : accent, borderRadius: '13px 13px 0 0' }} />
+      <div style={{ width: 42, height: 42, borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 10,
+        background: locked ? '#eef1f6' : hexA(accent, 0.12), color: locked ? '#9aa6b8' : accent }}>
         <Icon size={20} strokeWidth={1.9} />
       </div>
-      <div style={{ fontWeight: 700, color: '#012158', fontSize: '.86rem', lineHeight: 1.25 }}>{label}</div>
+      <div style={{ fontWeight: 700, color: locked ? '#67728a' : '#012158', fontSize: '.86rem', lineHeight: 1.25 }}>{label}</div>
       {subtitle && <div style={{ fontSize: '.7rem', color: '#8b96a9', marginTop: 3, lineHeight: 1.3 }}>{subtitle}</div>}
-      {!live && <span style={{ position: 'absolute', top: 10, right: 10, fontSize: '.54rem', textTransform: 'uppercase', letterSpacing: '.06em', color: '#8b96a9', background: '#eef1f6', padding: '2px 7px', borderRadius: 999, fontWeight: 700 }}>{tr('common.soon')}</span>}
+      {locked && (
+        <span title={tr('home.locked')} style={{ position: 'absolute', top: 10, right: 10, display: 'grid', placeItems: 'center',
+          width: 22, height: 22, borderRadius: 999, background: '#eef1f6', color: '#8b96a9' }}>
+          <Lock size={12} strokeWidth={2.2} />
+        </span>
+      )}
+      {!locked && !live && <span style={{ position: 'absolute', top: 10, right: 10, fontSize: '.54rem', textTransform: 'uppercase', letterSpacing: '.06em', color: '#8b96a9', background: '#eef1f6', padding: '2px 7px', borderRadius: 999, fontWeight: 700 }}>{tr('common.soon')}</span>}
     </>
   );
   const base = { position: 'relative', display: 'block', background: '#fff', border: '1px solid #e6ebf3', borderRadius: 13,
-    padding: '18px 14px 14px', boxShadow: '0 1px 2px rgba(1,33,88,.04)', overflow: 'hidden', opacity: live ? 1 : 0.6, textDecoration: 'none',
+    padding: '18px 14px 14px', boxShadow: '0 1px 2px rgba(1,33,88,.04)', overflow: 'hidden', opacity: (live || locked) ? (locked ? 0.72 : 1) : 0.6,
+    cursor: locked ? 'not-allowed' : undefined, textDecoration: 'none',
     transition: 'transform .14s, box-shadow .14s, border-color .14s' };
   const hover = (e, on) => { if (!live) return; e.currentTarget.style.transform = on ? 'translateY(-2px)' : 'none'; e.currentTarget.style.boxShadow = on ? '0 6px 18px rgba(1,33,88,.10)' : '0 1px 2px rgba(1,33,88,.04)'; e.currentTarget.style.borderColor = on ? '#cfdaea' : '#e6ebf3'; };
+  if (locked) return <div style={base} title={tr('home.locked')}>{body}</div>;
   return live
     ? <Link to={item.to} style={base} onMouseEnter={(e) => hover(e, true)} onMouseLeave={(e) => hover(e, false)}>{body}</Link>
     : <div style={base}>{body}</div>;
