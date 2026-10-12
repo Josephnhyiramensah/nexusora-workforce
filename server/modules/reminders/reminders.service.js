@@ -169,9 +169,19 @@ function startReminderScheduler() {
   if (next <= now) next.setTime(next.getTime() + DAY);
   const delay = next.getTime() - now.getTime();
   console.log(`[reminders] scheduled — first sweep ${next.toISOString()} (in ${Math.round(delay / 60000)} min), then daily`);
-  setTimeout(function fire() {
+  // The daily maintenance pass: overdue reminders + the subscription lifecycle
+  // sweep (trial/grace/expiry transitions). Billing sweep required lazily to
+  // avoid any load-order coupling.
+  const dailyPass = () => {
     runAllTenants().catch((e) => console.error('[reminders] sweep error:', e.message));
-    setInterval(() => runAllTenants().catch((e) => console.error('[reminders] sweep error:', e.message)), DAY);
+    try {
+      require('../../services/subscriptionSweep.service').runSubscriptionSweep()
+        .catch((e) => console.error('[billing] sweep error:', e.message));
+    } catch (e) { console.error('[billing] sweep load failed:', e.message); }
+  };
+  setTimeout(function fire() {
+    dailyPass();
+    setInterval(dailyPass, DAY);
   }, delay);
 }
 
