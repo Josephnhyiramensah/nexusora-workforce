@@ -157,7 +157,7 @@ const startCheckout = asyncHandler(async (req, res) => {
     email: tenant.billingEmail || req.body.email,
     amountMajor: chargeTotal, currency: chargeCur, reference,
     metadata: { subdomain: tenant.subdomain, plan, invoice: number },
-    callbackUrl: `${env.APP_URL.replace(/\/+$/, '')}/billing?ref=${encodeURIComponent(reference)}`,
+    callbackUrl: `${env.APP_URL.replace(/\/+$/, '')}/settings?tab=billing&ref=${encodeURIComponent(reference)}`,
     channels: ['card', 'mobile_money'],
   });
   if (!init.ok) {

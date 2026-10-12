@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { User, Building2, Users, Shield, Code, Palette, Pencil, Power, Star, List, Settings as SettingsIcon, Coins } from 'lucide-react';
+import { User, Building2, Users, Shield, Code, Palette, Pencil, Power, Star, List, Settings as SettingsIcon, Coins, CreditCard } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -9,6 +9,7 @@ import PicklistsSettings from '../components/PicklistsSettings';
 import ApiKeysSettings from '../components/settings/ApiKeysSettings';
 import WhiteLabelSettings from '../components/settings/WhiteLabelSettings';
 import SecuritySettings from '../components/settings/SecuritySettings';
+import BillingSettings from '../components/settings/BillingSettings';
 import { ModuleShell, Hero, Body } from '../ui/kit';
 
 const C = { navy: '#012158', blue: '#3485E9', gold: '#C9A227', green: '#1f9d57', red: '#e5484d',
@@ -33,6 +34,7 @@ const SECTIONS = [
   { key: 'company',    group: 'Workspace',  label: 'Company',          Icon: Building2,    title: 'Company & Letterhead', sub: 'Company details, branding and the base currency payroll runs in.' },
   { key: 'users',      group: 'Workspace',  label: 'Users & Roles',    Icon: Users,        title: 'Users & Roles',     sub: 'Manage logins, roles and the employee each login is linked to.' },
   { key: 'picklists',  group: 'Workspace',  label: 'Lists',            Icon: List,         title: 'Lists',             sub: 'The dropdown lists used across the workspace.' },
+  { key: 'billing',    group: 'Workspace',  label: 'Billing & Plan',   Icon: CreditCard,   title: 'Billing & Plan',    sub: 'Your subscription, plan, seats and invoices.' },
   { key: 'security',   group: 'Governance', label: 'Security',         Icon: Shield,       title: 'Security',          sub: 'How sign-in credentials and sessions are handled.' },
   { key: 'api',        group: 'Governance', label: 'API Keys',         Icon: Code,         title: 'API Keys',          sub: 'Connect Nexusora Workforce to external software.', pro: true },
   { key: 'whitelabel', group: 'Governance', label: 'White-label',      Icon: Palette,      title: 'White-label',       sub: 'Apply your own brand colours and logo across the workspace.', pro: true },
@@ -82,6 +84,7 @@ export default function SettingsPage() {
         {tab === 'company' && <CompanyTab setMsg={setMsg} />}
         {tab === 'users' && <UsersTab me={user} setMsg={setMsg} />}
         {tab === 'picklists' && <PicklistsSettings setMsg={setMsg} />}
+        {tab === 'billing' && <BillingSettings setMsg={setMsg} />}
         {tab === 'security' && <SecuritySettings setMsg={setMsg} />}
         {tab === 'api' && <ApiKeysSettings setMsg={setMsg} />}
         {tab === 'whitelabel' && <WhiteLabelSettings setMsg={setMsg} />}
