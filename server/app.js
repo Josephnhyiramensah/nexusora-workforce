@@ -21,7 +21,9 @@ app.use(compression({
   filter: (req, res) => (req.headers['x-no-compression'] ? false : compression.filter(req, res)),
 }));
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
-app.use(express.json({ limit: '10mb' }));
+// Capture the raw body so webhook handlers (e.g. Paystack) can verify HMAC
+// signatures against the exact bytes received.
+app.use(express.json({ limit: '10mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
 if (env.NODE_ENV !== 'test') app.use(morgan('dev'));
 
