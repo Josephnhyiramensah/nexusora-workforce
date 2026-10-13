@@ -167,7 +167,8 @@ const impersonate = asyncHandler(async (req, res) => {
       : await User.findOne({ role: 'super_admin', isActive: true }).sort({ createdAt: 1 });
   } catch (e) { return res.status(503).json({ message: 'Tenant database unreachable' }); }
   if (!user) return res.status(404).json({ message: 'No admin user to impersonate in this tenant' });
-  const token = signToken({ userId: user._id, tenant: t.subdomain, role: user.role, permissions: user.permissions || [], impersonated: true });
+  // Short-lived: an impersonation session must not be a month-long back door.
+  const token = signToken({ userId: user._id, tenant: t.subdomain, role: user.role, permissions: user.permissions || [], impersonated: true }, { expiresIn: '2h' });
   await logPlatform(master, req, 'tenant.impersonate', { subdomain: t.subdomain, userId: String(user._id) });
   res.json({ token, subdomain: t.subdomain, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 });

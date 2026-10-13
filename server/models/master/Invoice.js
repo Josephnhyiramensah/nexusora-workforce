@@ -33,6 +33,8 @@ const schema = new mongoose.Schema({
   // Payment provider linkage (A2). Opaque references only.
   provider: { type: String },
   providerRef: { type: String },                   // transaction / charge reference
+  chargeAmount: { type: Number },                  // amount actually sent to the gateway
+  chargeCurrency: { type: String, uppercase: true },// currency actually charged (may differ from `currency`)
   paymentMethod: { type: String },                 // 'card' | 'mobile_money' | ...
   dueDate: { type: Date },
   paidAt: { type: Date },

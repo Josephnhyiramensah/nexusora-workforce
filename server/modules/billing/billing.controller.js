@@ -159,6 +159,10 @@ const startCheckout = asyncHandler(async (req, res) => {
     }
     chargeTotal = c.amount;
   }
+  // Record what we're actually charging so the webhook can verify the payment.
+  invoice.chargeAmount = chargeTotal;
+  invoice.chargeCurrency = chargeCur;
+  await invoice.save();
 
   const init = await paystack.initializeTransaction({
     email: tenant.billingEmail || req.body.email,
@@ -252,6 +256,7 @@ const changePlan = asyncHandler(async (req, res) => {
     if (!c.converted) { await Invoice.updateOne({ providerRef: reference }, { $set: { status: 'void' } }); return res.status(503).json({ message: 'Exchange rate unavailable right now — please try again shortly.' }); }
     chargeTotal = c.amount;
   }
+  await Invoice.updateOne({ providerRef: reference }, { $set: { chargeAmount: chargeTotal, chargeCurrency: chargeCur } });
   const init = await paystack.initializeTransaction({
     email: tenant.billingEmail, amountMajor: chargeTotal, currency: chargeCur, reference,
     metadata: { subdomain: tenant.subdomain, plan: target, invoice: number, kind: 'proration' },
@@ -277,7 +282,19 @@ async function processChargeSuccess(reference, channel) {
   if (!invoice || invoice.status === 'paid') return;
   // Double-check with Paystack when reachable; trust the signed webhook otherwise.
   const v = await paystack.verifyTransaction(reference);
-  if (v.ok && v.status && v.status !== 'success') return;
+  if (v.ok) {
+    if (v.status && v.status !== 'success') return;
+    // Guard against underpayment or a currency mismatch — never activate on a
+    // payment that doesn't match what we asked the gateway to charge.
+    if (invoice.chargeAmount != null) {
+      const amountOk = Number(v.amountMajor) + 0.01 >= Number(invoice.chargeAmount);
+      const curOk = !invoice.chargeCurrency || String(v.currency || '').toUpperCase() === invoice.chargeCurrency;
+      if (!amountOk || !curOk) {
+        console.error(`[billing] payment mismatch on ${invoice.number}: got ${v.amountMajor} ${v.currency}, expected ${invoice.chargeAmount} ${invoice.chargeCurrency}`);
+        return;
+      }
+    }
+  }
 
   invoice.status = 'paid';
   invoice.paidAt = new Date();
