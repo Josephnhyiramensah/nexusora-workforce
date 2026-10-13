@@ -278,28 +278,33 @@ async function processChargeSuccess(reference, channel) {
   if (!master) return;
   const Invoice = master.model('Invoice');
   const Tenant = master.model('Tenant');
-  const invoice = await Invoice.findOne({ providerRef: reference });
-  if (!invoice || invoice.status === 'paid') return;
+  const existing = await Invoice.findOne({ providerRef: reference });
+  if (!existing || existing.status === 'paid') return;
   // Double-check with Paystack when reachable; trust the signed webhook otherwise.
   const v = await paystack.verifyTransaction(reference);
   if (v.ok) {
     if (v.status && v.status !== 'success') return;
     // Guard against underpayment or a currency mismatch — never activate on a
     // payment that doesn't match what we asked the gateway to charge.
-    if (invoice.chargeAmount != null) {
-      const amountOk = Number(v.amountMajor) + 0.01 >= Number(invoice.chargeAmount);
-      const curOk = !invoice.chargeCurrency || String(v.currency || '').toUpperCase() === invoice.chargeCurrency;
+    if (existing.chargeAmount != null) {
+      const amountOk = Number(v.amountMajor) + 0.01 >= Number(existing.chargeAmount);
+      const curOk = !existing.chargeCurrency || String(v.currency || '').toUpperCase() === existing.chargeCurrency;
       if (!amountOk || !curOk) {
-        console.error(`[billing] payment mismatch on ${invoice.number}: got ${v.amountMajor} ${v.currency}, expected ${invoice.chargeAmount} ${invoice.chargeCurrency}`);
+        console.error(`[billing] payment mismatch on ${existing.number}: got ${v.amountMajor} ${v.currency}, expected ${existing.chargeAmount} ${existing.chargeCurrency}`);
         return;
       }
     }
   }
 
-  invoice.status = 'paid';
-  invoice.paidAt = new Date();
-  invoice.paymentMethod = channel || (v.ok ? v.channel : undefined);
-  await invoice.save();
+  // Atomically claim the invoice so a concurrent webhook retry (or the callback
+  // endpoint firing alongside the webhook) can't double-apply the paid period or
+  // double-send the receipt. Only the delivery that wins this update proceeds.
+  const invoice = await Invoice.findOneAndUpdate(
+    { providerRef: reference, status: { $ne: 'paid' } },
+    { $set: { status: 'paid', paidAt: new Date(), paymentMethod: channel || (v.ok ? v.channel : undefined) } },
+    { new: true },
+  );
+  if (!invoice) return;   // another delivery already claimed it
 
   const tenant = await Tenant.findById(invoice.tenant);
   if (!tenant) return;
