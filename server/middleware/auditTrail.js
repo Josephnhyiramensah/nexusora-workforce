@@ -36,13 +36,14 @@ function auditTrail(req, res, next) {
       if (!req.tenantConn || !req.auth) return;         // authenticated tenant actions only
       if (SKIP.some((rx) => rx.test(path))) return;
       record(req.tenantConn, {
-        actor: { id: String(req.auth.userId || ''), role: req.auth.role, type: 'user' },
+        actor: { id: String(req.auth.userId || ''), role: req.auth.role, type: req.auth.impersonated ? 'platform' : 'user' },
         action: deriveAction(req.method, path),
         method: req.method,
         path,
         statusCode: res.statusCode,
         ip: clientIp(req),
-        meta: { body: summarizeBody(req.body) },
+        // Flag actions taken while a platform admin was "logged in as" this user.
+        meta: { body: summarizeBody(req.body), ...(req.auth.impersonated ? { impersonated: true } : {}) },
       });
     } catch { /* never affect the response */ }
   });

@@ -25,6 +25,8 @@ app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 // signatures against the exact bytes received.
 app.use(express.json({ limit: '10mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
+// Strip Mongo operator/dotted keys from all inputs (NoSQL-injection guard, E1).
+app.use(require('./middleware/sanitize').sanitize);
 if (env.NODE_ENV !== 'test') app.use(morgan('dev'));
 
 // Lightweight perf logger: flags slow requests and shows how much of the time

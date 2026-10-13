@@ -274,6 +274,13 @@ const updateTenantUser = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.uid);
   if (!user) return res.status(404).json({ message: 'User not found' });
   const b = req.body || {};
+  // Reactivating consumes a seat — enforce the tenant's cap.
+  if (b.isActive && !user.isActive) {
+    const limit = seatLimit(r.tenant);
+    if (limit != null && (await User.countDocuments({ isActive: true })) >= limit) {
+      return res.status(403).json({ code: 'seat_limit_reached', message: `This tenant's plan includes ${limit} seats and all are in use.`, seatLimit: limit });
+    }
+  }
   if (b.role !== undefined) user.role = b.role;
   if (b.isActive !== undefined) user.isActive = !!b.isActive;
   if (b.name !== undefined) user.name = b.name;

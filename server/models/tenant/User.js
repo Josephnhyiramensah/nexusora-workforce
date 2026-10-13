@@ -22,6 +22,9 @@ const schema = new mongoose.Schema({
   twoFactorBackupCodes: { type: [String], select: false, default: undefined },
   isActive: { type: Boolean, default: true },
   mustChangePassword: { type: Boolean, default: false },
+  // Brute-force lockout (E2): count consecutive failures, lock after a threshold.
+  failedLoginAttempts: { type: Number, default: 0, select: false },
+  lockUntil: { type: Date, select: false },
   // Email verification (C4). emailVerified gates self-signup activation; the
   // token is stored hashed (sha256) and never exposed.
   emailVerified: { type: Boolean, default: false },

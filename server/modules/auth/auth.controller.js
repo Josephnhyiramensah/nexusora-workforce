@@ -43,13 +43,35 @@ function issueSession(res, user, tenant, extra = {}) {
   res.json({ token, user: safeUser(user), tenant: tenantInfo(tenant), ...extra });
 }
 
+// Brute-force lockout (E2): after MAX_FAILS consecutive failures, lock the
+// account for LOCK_MINUTES. Resets on a successful sign-in.
+const MAX_FAILS = 6;
+const LOCK_MINUTES = 15;
+
 // POST /api/auth/login
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
   const User = req.tenantConn.model('User');
-  const user = await User.findOne({ email: (email || '').toLowerCase(), isActive: true }).select('+password');
-  if (!user || !(await user.matchPassword(password || ''))) {
+  const user = await User.findOne({ email: (email || '').toLowerCase(), isActive: true })
+    .select('+password +failedLoginAttempts +lockUntil');
+  // Locked? Refuse without revealing whether the password was right.
+  if (user && user.lockUntil && user.lockUntil > new Date()) {
+    const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
+    return res.status(429).json({ message: `Too many attempts. Try again in about ${mins} minute${mins === 1 ? '' : 's'}.` });
+  }
+  const matched = user && await user.matchPassword(password || '');
+  if (!matched) {
+    if (user) {
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      if (user.failedLoginAttempts >= MAX_FAILS) { user.lockUntil = new Date(Date.now() + LOCK_MINUTES * 60000); user.failedLoginAttempts = 0; }
+      await user.save({ validateBeforeSave: false });
+    }
     return res.status(401).json({ message: 'Invalid credentials' });
+  }
+  // Successful credential check — clear any failure state.
+  if (user.failedLoginAttempts || user.lockUntil) {
+    user.failedLoginAttempts = 0; user.lockUntil = undefined;
+    await user.save({ validateBeforeSave: false });
   }
   // If the user has 2FA enabled, don't issue a session yet — return a short-lived
   // challenge and require the second factor via POST /auth/2fa/login.
@@ -169,6 +191,16 @@ const setUserStatus = asyncHandler(async (req, res) => {
   const User = req.tenantConn.model('User');
   const user = await User.findById(req.params.id);
   if (!user) return res.status(404).json({ message: 'User not found' });
+  // Reactivating consumes a seat — enforce the cap here too, not just on create.
+  if (isActive && !user.isActive) {
+    const limit = seatLimit(req.tenant);
+    if (limit != null) {
+      const activeCount = await User.countDocuments({ isActive: true });
+      if (activeCount >= limit) {
+        return res.status(403).json({ code: 'seat_limit_reached', message: `Your plan includes ${limit} seats and all are in use. Upgrade or purchase more seats to reactivate this user.`, seatLimit: limit });
+      }
+    }
+  }
   user.isActive = !!isActive;
   await user.save();
   res.json({ user: safeUser(user) });
