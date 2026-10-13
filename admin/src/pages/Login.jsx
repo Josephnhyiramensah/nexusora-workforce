@@ -22,7 +22,7 @@ export default function Login() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: `linear-gradient(135deg, #0a1a33, ${C.navy})`, fontFamily: 'Inter, system-ui, Arial, sans-serif', padding: 20 }}>
-      <motion.div initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }}
+      <motion.div initial={{ scale: 0.94 }} animate={{ scale: 1 }}
         style={{ background: '#fff', borderRadius: 20, padding: '44px 40px', width: 400, maxWidth: '100%', textAlign: 'center', boxShadow: '0 30px 70px rgba(0,0,0,0.35)' }}>
         <div style={{ width: 56, height: 56, margin: '0 auto 18px', borderRadius: 15, background: `linear-gradient(135deg, ${C.navy}, ${C.blue})`, color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 24 }}>N</div>
         <h1 style={{ fontSize: 21, fontWeight: 800, color: C.navy, margin: '0 0 5px' }}>Developer Console</h1>

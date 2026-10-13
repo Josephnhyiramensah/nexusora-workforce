@@ -55,6 +55,14 @@ async function resolveTenant(req, res, next) {
     const tenant = await lookupTenant(master, subdomain);
     if (!tenant) return res.status(404).json({ message: 'Unknown tenant' });
     if (tenant.status === 'suspended') return res.status(403).json({ message: 'Tenant suspended' });
+    // Subscription expiry lockout (A2). Expired = trial lapsed or paid period +
+    // grace elapsed. Billing and auth stay open so the tenant can sign in and
+    // renew; everything else is refused with 402 until they do.
+    if (tenant.status === 'expired') {
+      const base = req.baseUrl || '';
+      const open = base.startsWith('/api/billing') || base.startsWith('/api/auth');
+      if (!open) return res.status(402).json({ code: 'subscription_inactive', message: 'Your subscription has expired. Please renew to continue.', status: 'expired' });
+    }
 
     req.tenant = tenant;
     req.tenantConn = await getTenantConnection(tenant.dbName);

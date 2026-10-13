@@ -152,7 +152,12 @@ const startCheckout = asyncHandler(async (req, res) => {
   let chargeTotal = total;
   if (chargeCur !== billingCurrency) {
     const c = await fx.convert(total, billingCurrency, chargeCur);
-    if (c.converted) chargeTotal = c.amount;
+    if (!c.converted) {
+      // Refuse rather than charge the wrong amount in the wrong currency.
+      invoice.status = 'void'; await invoice.save();
+      return res.status(503).json({ message: 'Exchange rate unavailable right now — please try again shortly.' });
+    }
+    chargeTotal = c.amount;
   }
 
   const init = await paystack.initializeTransaction({
@@ -242,7 +247,11 @@ const changePlan = asyncHandler(async (req, res) => {
   });
   const chargeCur = paystack.chargeableCurrency(billingCurrency);
   let chargeTotal = total;
-  if (chargeCur !== billingCurrency) { const c = await fx.convert(total, billingCurrency, chargeCur); if (c.converted) chargeTotal = c.amount; }
+  if (chargeCur !== billingCurrency) {
+    const c = await fx.convert(total, billingCurrency, chargeCur);
+    if (!c.converted) { await Invoice.updateOne({ providerRef: reference }, { $set: { status: 'void' } }); return res.status(503).json({ message: 'Exchange rate unavailable right now — please try again shortly.' }); }
+    chargeTotal = c.amount;
+  }
   const init = await paystack.initializeTransaction({
     email: tenant.billingEmail, amountMajor: chargeTotal, currency: chargeCur, reference,
     metadata: { subdomain: tenant.subdomain, plan: target, invoice: number, kind: 'proration' },

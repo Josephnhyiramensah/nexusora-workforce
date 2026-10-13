@@ -123,7 +123,7 @@ export function Btn({ children, onClick, tone = 'primary', disabled, small, type
 export function Modal({ title, subtitle, children, onClose, wide }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(1,33,88,0.5)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 20 }}>
-      <motion.div initial={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }} onClick={(e) => e.stopPropagation()}
+      <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}
         style={{ background: '#fff', borderRadius: 16, width: '100%', maxWidth: wide ? 720 : 560, maxHeight: '92vh', overflowY: 'auto' }}>
         <div style={{ padding: '18px 22px', borderBottom: `1px solid ${C.line}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
           <div>

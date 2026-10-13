@@ -24,7 +24,14 @@ export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err.response && err.response.status === 401 && onUnauthorized) onUnauthorized();
+    const st = err.response && err.response.status;
+    if (st === 401 && onUnauthorized) onUnauthorized();
+    // Subscription expired: route the user to billing to renew (unless already there).
+    if (st === 402 && err.response?.data?.code === 'subscription_inactive') {
+      try {
+        if (!/[?&]tab=billing/.test(window.location.search)) window.location.assign('/settings?tab=billing&expired=1');
+      } catch { /* ignore */ }
+    }
     return Promise.reject(err);
   }
 );
