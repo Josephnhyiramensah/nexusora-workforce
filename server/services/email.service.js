@@ -93,12 +93,21 @@ function button(href, label) {
 
 function p(html) { return `<p style="margin:0 0 14px">${html}</p>`; }
 
-// Build the login URL for a workspace. Subdomain-per-tenant URLs (D3) aren't
-// live yet, so link to the app and carry the workspace as a query hint.
+// Build the login URL for a workspace (D3). When APP_BASE_DOMAIN is configured
+// each tenant has its own subdomain, so link straight there; otherwise (local
+// dev) link to the app and carry the workspace as a query hint.
 function loginUrl(tenant) {
   const sub = brandOf(tenant).subdomain;
+  if (sub && env.APP_BASE_DOMAIN) return `https://${sub}.${env.APP_BASE_DOMAIN}/login`;
   const base = env.APP_URL.replace(/\/+$/, '');
   return sub ? `${base}/login?workspace=${encodeURIComponent(sub)}` : `${base}/login`;
+}
+
+// The tenant's workspace home URL (used in welcome/receipt copy).
+function workspaceUrl(tenant) {
+  const sub = brandOf(tenant).subdomain;
+  if (sub && env.APP_BASE_DOMAIN) return `https://${sub}.${env.APP_BASE_DOMAIN}`;
+  return env.APP_URL.replace(/\/+$/, '');
 }
 
 // --------------------------------------------------------------------------- //

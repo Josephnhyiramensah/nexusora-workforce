@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getSubdomain } from '../api/client';
+import { getSubdomain, hostSubdomain } from '../api/client';
 
 export default function LoginPage() {
   const { login, verifyTwoFactor } = useAuth();
   const navigate = useNavigate();
-  const [subdomain, setSubdomain] = useState(getSubdomain() || 'demo');
+  // On a real tenant subdomain the host identifies the workspace, so we hide the
+  // field and use it; on localhost/apex the user types which workspace to enter.
+  const hostSub = hostSubdomain();
+  const [subdomain, setSubdomain] = useState(hostSub || getSubdomain() || '');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -80,13 +83,15 @@ export default function LoginPage() {
 
           {stage === 'creds' && (
             <>
-              <Field label="Workspace">
-                <IconBox>{/* building icon */}
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6b7a92" strokeWidth="2"><path d="M3 21h18M6 21V7l6-4 6 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>
-                </IconBox>
-                <input value={subdomain} onChange={(e) => setSubdomain(e.target.value)} onKeyDown={onEnter}
-                  placeholder="demo" style={inputStyle(C)} />
-              </Field>
+              {!hostSub && (
+                <Field label="Workspace">
+                  <IconBox>{/* building icon */}
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6b7a92" strokeWidth="2"><path d="M3 21h18M6 21V7l6-4 6 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>
+                  </IconBox>
+                  <input value={subdomain} onChange={(e) => setSubdomain(e.target.value)} onKeyDown={onEnter}
+                    placeholder="your-workspace" style={inputStyle(C)} />
+                </Field>
+              )}
 
               <Field label="Email address">
                 <IconBox>
@@ -146,11 +151,11 @@ export default function LoginPage() {
           )}
 
           {stage === 'creds' ? (
-            <button onClick={submit} disabled={busy || !email || !password}
+            <button onClick={submit} disabled={busy || !email || !password || (!hostSub && !subdomain)}
               style={{ width: '100%', padding: '13px', border: 'none', borderRadius: 12, cursor: 'pointer',
                 color: '#fff', fontWeight: 700, fontSize: '1rem',
                 background: `linear-gradient(90deg, ${C.navy}, ${C.blue})`,
-                opacity: busy || !email || !password ? 0.6 : 1,
+                opacity: busy || !email || !password || (!hostSub && !subdomain) ? 0.6 : 1,
                 boxShadow: '0 8px 20px rgba(1,33,88,.25)' }}>
               {busy ? 'Signing in…' : 'Sign In'}
             </button>

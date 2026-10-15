@@ -26,6 +26,10 @@ const env = {
   MAIL_FROM: process.env.MAIL_FROM || 'Nexusora Workforce <no-reply@nexusora.app>',
   // Public app URL used to build links in emails (login, reset, verify, surveys).
   APP_URL: process.env.APP_URL || process.env.CLIENT_URL || 'http://localhost:5173',
+  // Base domain for per-tenant subdomain URLs (D3), e.g. 'nexusoraworkforce.com'
+  // → a tenant 'acme' lives at https://acme.nexusoraworkforce.com. When unset
+  // (local dev), tenant links fall back to APP_URL + ?workspace= hint.
+  APP_BASE_DOMAIN: (process.env.APP_BASE_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase(),
 
   // Overdue reminder sweep.
   REMINDERS_ENABLED: String(process.env.REMINDERS_ENABLED || 'true').toLowerCase() !== 'false',

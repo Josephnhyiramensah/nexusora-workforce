@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import api, { setToken, setSubdomain, getToken, setUnauthorizedHandler } from '../api/client';
+import api, { setToken, setSubdomain, getToken, setUnauthorizedHandler, hostSubdomain } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -16,6 +16,9 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let active = true;
     (async () => {
+      // D3: on a real tenant subdomain, the host IS the workspace — lock the
+      // stored subdomain to it so every API call resolves the right tenant.
+      try { const hs = hostSubdomain(); if (hs) setSubdomain(hs); } catch { /* ignore */ }
       // Support impersonation ("login as") from the admin console: a one-time
       // token in the URL starts a session, then the param is scrubbed.
       try {

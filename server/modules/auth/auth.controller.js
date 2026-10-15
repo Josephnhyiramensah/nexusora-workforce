@@ -256,6 +256,12 @@ function hashToken(raw) {
   return crypto.createHash('sha256').update(String(raw)).digest('hex');
 }
 function appLink(tenant, path, raw) {
+  // D3: when a base domain is configured, link straight to the tenant's own
+  // subdomain (the host carries the workspace); otherwise use APP_URL + a
+  // ?workspace= hint for local/dev where there is no subdomain.
+  if (tenant && tenant.subdomain && env.APP_BASE_DOMAIN) {
+    return `https://${tenant.subdomain}.${env.APP_BASE_DOMAIN}${path}?token=${raw}`;
+  }
   const base = env.APP_URL.replace(/\/+$/, '');
   return `${base}${path}?token=${raw}&workspace=${encodeURIComponent(tenant.subdomain)}`;
 }

@@ -20,7 +20,23 @@ app.use(compression({
   threshold: 1024,
   filter: (req, res) => (req.headers['x-no-compression'] ? false : compression.filter(req, res)),
 }));
-app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
+// CORS: allow the configured client origin, and — when a base domain is set —
+// any https tenant subdomain of it (acme.nexusoraworkforce.com), so per-tenant
+// origins work even in a split client/API host setup. Same-origin requests (the
+// SPA's relative /api calls) and server-to-server calls (no Origin) pass through.
+const corsOrigin = (origin, cb) => {
+  if (!origin) return cb(null, true);
+  if (origin === env.CLIENT_URL) return cb(null, true);
+  const base = env.APP_BASE_DOMAIN;
+  if (base) {
+    try {
+      const host = new URL(origin).hostname.toLowerCase();
+      if (host === base || host.endsWith('.' + base)) return cb(null, true);
+    } catch { /* malformed origin → reject below */ }
+  }
+  return cb(new Error('Not allowed by CORS'));
+};
+app.use(cors({ origin: corsOrigin, credentials: true }));
 // Capture the raw body so webhook handlers (e.g. Paystack) can verify HMAC
 // signatures against the exact bytes received.
 app.use(express.json({ limit: '10mb', verify: (req, res, buf) => { req.rawBody = buf; } }));

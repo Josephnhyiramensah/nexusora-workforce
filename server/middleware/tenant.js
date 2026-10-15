@@ -27,15 +27,29 @@ async function lookupTenant(master, subdomain) {
   return tenant;
 }
 
-function subdomainFromHost(host) {
+const RESERVED_SUBS = ['www', 'api', 'app', 'admin', 'mail', 'static', 'assets'];
+
+function subdomainFromHost(host, base = env.APP_BASE_DOMAIN) {
   if (!host) return null;
-  const name = host.split(':')[0];
+  const name = host.split(':')[0].toLowerCase();
+  if (name === 'localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return null;  // dev / IP
+  // When a base domain is configured, a tenant is resolved ONLY from a host
+  // under that base ('acme.nexusoraworkforce.com' -> 'acme'). A host that is not
+  // under it (e.g. an attacker domain pointed at us) resolves no tenant — the
+  // apex itself has none either.
+  if (base) {
+    if (name !== base && name.endsWith('.' + base)) {
+      const sub = name.slice(0, -(base.length + 1)).split('.')[0];  // left-most label
+      return RESERVED_SUBS.includes(sub) ? null : sub;
+    }
+    return null;
+  }
+  // No base domain configured (dev/preview): fall back to the first label of a
+  // 3+ part host.
   const parts = name.split('.');
-  // e.g. acme.nexusora-workforce.app -> 'acme'; ignore localhost / bare hosts
   if (parts.length < 3) return null;
-  const sub = parts[0].toLowerCase();
-  if (['www', 'api', 'app'].includes(sub)) return null;
-  return sub;
+  const sub = parts[0];
+  return RESERVED_SUBS.includes(sub) ? null : sub;
 }
 
 async function resolveTenant(req, res, next) {
