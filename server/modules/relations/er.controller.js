@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const { searchRegex } = require('../../utils/searchRegex');
 const path = require('path');
 const cloudinary = require('../../config/cloudinary');
 
@@ -38,7 +39,7 @@ const listCases = asyncHandler(async (req, res) => {
   if (status && status !== 'all') filter.status = status;
   if (severity && severity !== 'all') filter.severity = severity;
   if (assignedTo) filter.assignedTo = assignedTo;
-  if (q) filter.$or = [{ caseNumber: new RegExp(q, 'i') }, { category: new RegExp(q, 'i') }, { description: new RegExp(q, 'i') }];
+  if (q) { const rx = searchRegex(q); filter.$or = [{ caseNumber: rx }, { category: rx }, { description: rx }]; }
 
   const items = await ERCase.find(filter)
     .populate('employee', 'firstName lastName staffId employment.department')

@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const { searchRegex } = require('../../utils/searchRegex');
 const cloudinary = require('../../config/cloudinary');
 const ExcelJS = require('exceljs');
 const { Readable } = require('stream');
@@ -72,7 +73,7 @@ const list = asyncHandler(async (req, res) => {
   // Direct-reports lookup for the org chart: GET /employees?manager=<employeeId>
   if (manager) filter['employment.lineManager'] = manager;
   if (q) {
-    const rx = new RegExp(String(q).trim(), 'i');
+    const rx = searchRegex(q);
     filter.$or = [{ firstName: rx }, { lastName: rx }, { staffId: rx }, { email: rx }];
   }
   const pg = Math.max(1, parseInt(page, 10) || 1);

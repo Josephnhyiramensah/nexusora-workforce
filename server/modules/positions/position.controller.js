@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const { searchRegex } = require('../../utils/searchRegex');
 const cloudinary = require('../../config/cloudinary');
 
 function uploadBuffer(buffer, { folder, resourceType = 'auto', publicId }) {
@@ -19,7 +20,7 @@ const list = asyncHandler(async (req, res) => {
   if (active === 'true') filter.active = true;
   if (active === 'false') filter.active = false;
   if (q) {
-    const rx = new RegExp(String(q).trim(), 'i');
+    const rx = searchRegex(q);
     filter.$or = [{ title: rx }, { code: rx }];
   }
   const positions = await Position.find(filter)

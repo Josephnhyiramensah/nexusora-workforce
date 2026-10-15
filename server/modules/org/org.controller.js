@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const { searchRegex } = require('../../utils/searchRegex');
 const { checkUnit } = require('../../utils/orgUnitGuard');
 
 // GET /org?type=department&active=true&q=...
@@ -10,7 +11,7 @@ const list = asyncHandler(async (req, res) => {
   if (active === 'true') filter.active = true;
   if (active === 'false') filter.active = false;
   if (q) {
-    const rx = new RegExp(String(q).trim(), 'i');
+    const rx = searchRegex(q);
     filter.$or = [{ name: rx }, { code: rx }];
   }
   const items = await OrgUnit.find(filter)

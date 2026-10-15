@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const { searchRegex } = require('../../utils/searchRegex');
 const path = require('path');
 const cloudinary = require('../../config/cloudinary');
 
@@ -41,7 +42,7 @@ const listCourses = asyncHandler(async (req, res) => {
   if (category && category !== 'all') filter.category = category;
   if (active === 'true') filter.active = true;
   if (active === 'false') filter.active = false;
-  if (q) { const rx = new RegExp(String(q).trim(), 'i'); filter.$or = [{ title: rx }, { code: rx }, { provider: rx }]; }
+  if (q) { const rx = searchRegex(q); filter.$or = [{ title: rx }, { code: rx }, { provider: rx }]; }
   const items = await Course.find(filter).populate('competencies', 'name code').sort({ title: 1 }).lean();
 
   // Attach enrollment counts per course.

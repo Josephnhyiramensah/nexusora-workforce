@@ -12,6 +12,7 @@ const asyncHandler = require('express-async-handler');
 const { resolveTenant } = require('../../middleware/tenant');
 const { attachEntitlements, requireFeature } = require('../../middleware/entitlements');
 const { authenticateApiKey, requireScope } = require('./apikey.controller');
+const { searchRegex } = require('../../utils/searchRegex');
 
 router.use(resolveTenant);
 router.use(attachEntitlements, requireFeature('external_api'));
@@ -27,7 +28,7 @@ router.get('/employees', requireScope('employees'), asyncHandler(async (req, res
   const filter = {};
   if (req.query.status) filter.status = String(req.query.status);
   if (req.query.q) {
-    const rx = new RegExp(String(req.query.q).trim(), 'i');
+    const rx = searchRegex(req.query.q);
     filter.$or = [{ firstName: rx }, { lastName: rx }, { staffId: rx }, { email: rx }];
   }
   const [items, total] = await Promise.all([

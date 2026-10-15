@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const { searchRegex } = require('../../utils/searchRegex');
 const path = require('path');
 const cloudinary = require('../../config/cloudinary');
 
@@ -57,7 +58,7 @@ const listCompany = asyncHandler(async (req, res) => {
   const { category, q, status } = req.query;
   const filter = {};
   if (category && category !== 'all') filter.category = category;
-  if (q) { const rx = new RegExp(q, 'i'); filter.$or = [{ title: rx }, { description: rx }, { tags: rx }]; }
+  if (q) { const rx = searchRegex(q); filter.$or = [{ title: rx }, { description: rx }, { tags: rx }]; }
 
   if (isHR(req)) {
     if (status && status !== 'all') filter.status = status;
@@ -258,7 +259,7 @@ const employeeDocs = asyncHandler(async (req, res) => {
   ]);
   let items = rows;
   if (req.query.q) {
-    const rx = new RegExp(req.query.q, 'i');
+    const rx = searchRegex(req.query.q);
     items = rows.filter((r) => rx.test(r.employeeName || '') || rx.test(r.name || '') || rx.test(r.type || '') || rx.test(r.staffId || ''));
   }
   res.json({ items, total: items.length });

@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const { searchRegex } = require('../../utils/searchRegex');
 const path = require('path');
 const cloudinary = require('../../config/cloudinary');
 
@@ -22,7 +23,7 @@ const listVacancies = asyncHandler(async (req, res) => {
   const { status, q } = req.query;
   const filter = {};
   if (status) filter.status = status;
-  if (q) filter.$or = [{ title: new RegExp(q, 'i') }, { code: new RegExp(q, 'i') }];
+  if (q) { const rx = searchRegex(q); filter.$or = [{ title: rx }, { code: rx }]; }
 
   const vacancies = await Vacancy.find(filter)
     .populate('department', 'name code')
@@ -108,7 +109,7 @@ const listApplications = asyncHandler(async (req, res) => {
   const filter = {};
   if (vacancy) filter.vacancy = vacancy;
   if (stage) filter.stage = stage;
-  if (q) filter.$or = [{ firstName: new RegExp(q, 'i') }, { lastName: new RegExp(q, 'i') }, { email: new RegExp(q, 'i') }];
+  if (q) { const rx = searchRegex(q); filter.$or = [{ firstName: rx }, { lastName: rx }, { email: rx }]; }
   const items = await Application.find(filter)
     .populate('vacancy', 'title code')
     .sort({ createdAt: -1 });
