@@ -4,7 +4,7 @@ const env = require('../../config/env');
 const { getMasterConnection } = require('../../config/db');
 const { provisionTenant } = require('../../services/provisioning.service');
 const subscription = require('../../services/subscription.service');
-const { startTrial, trialDaysLeft } = subscription;
+const { startTrial, startFree, trialDaysLeft } = subscription;
 const { MODULES, FEATURES, isValidPlan } = require('../../config/plans');
 const billing = require('../../config/billing');
 const emailSvc = require('../../services/email.service');
@@ -55,10 +55,13 @@ const registerCompany = asyncHandler(async (req, res) => {
   const master = getMasterConnection();
   if (!master) return res.status(503).json({ message: 'Registry unavailable' });
   const { company, subdomain, countryCode, baseCurrency, defaultLocale, enabledLocales, plan, admin } = req.body;
+  // Free tier starts as a permanent active subscription (no trial countdown);
+  // every paid plan starts on the 30-day trial.
+  const startState = plan === 'free' ? startFree() : startTrial();
   const r = await provisionTenant(master, {
     name: company, subdomain, countryCode, baseCurrency, defaultLocale, enabledLocales, plan,
     admin,
-    subscription: startTrial(),
+    subscription: startState,
     adminEmailVerified: false,     // self-signup must verify their email
   });
   if (!r.ok) return res.status(r.status).json({ message: r.message });

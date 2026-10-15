@@ -108,7 +108,9 @@ export default function BillingSettings({ setMsg }) {
         <div>
           <div style={{ fontWeight: 800, color: C.navy, marginBottom: 10 }}>Plans</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-            {plans.map((p) => {
+            {/* Free is a registration-time starting tier, not an in-app downgrade
+                target — hide it unless the tenant is currently on it. */}
+            {plans.filter((p) => p.key !== 'free' || sub?.plan === 'free').map((p) => {
               const current = p.key === sub?.plan;
               const curOrder = plans.find((x) => x.key === sub?.plan)?.order ?? 0;
               const isUpgrade = p.order > curOrder;

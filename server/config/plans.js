@@ -53,6 +53,17 @@ const CORE_MODULES = ['employees', 'org', 'positions', 'picklists', 'settings', 
 // ---- Plans (entitlements only — prices live in the Pricing model) -----------
 // seatLimit: null = unlimited.
 const PLANS = {
+  // Permanent free tier (freemium funnel). Tightly capped: a tiny team, core
+  // HR only (directory/org/positions/docs/settings + attendance + leave), no
+  // payroll/analytics/AI. Never expires (see subscription.service.startFree).
+  free: {
+    key: 'free',
+    label: 'Free',
+    order: 0,
+    seatLimit: 5,
+    modules: [...CORE_MODULES, 'attendance', 'leave'],
+    features: [],
+  },
   starter: {
     key: 'starter',
     label: 'Starter',

@@ -15,6 +15,13 @@ function startTrial(now = new Date()) {
   return { status: 'trial', trialEndsAt: addDays(now, billing.TRIAL_DAYS) };
 }
 
+// Fields for a permanent Free-tier tenant: active with no trial/period dates, so
+// deriveStatus leaves it 'active' forever (it never expires). Entitlements + the
+// 5-seat cap still gate what the Free plan can do.
+function startFree() {
+  return { status: 'active', trialEndsAt: undefined, currentPeriodEnd: undefined, graceEndsAt: undefined };
+}
+
 // Fields to set when a payment succeeds and a paid period begins.
 function beginPaidPeriod(now = new Date(), months = 1) {
   const end = new Date(now);
@@ -64,4 +71,4 @@ function trialDaysLeft(tenant, now = new Date()) {
   return ms > 0 ? Math.ceil(ms / 86400000) : 0;
 }
 
-module.exports = { addDays, startTrial, beginPaidPeriod, deriveStatus, isUsable, seatLimit, trialDaysLeft };
+module.exports = { addDays, startTrial, startFree, beginPaidPeriod, deriveStatus, isUsable, seatLimit, trialDaysLeft };

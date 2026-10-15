@@ -24,6 +24,16 @@ test('deriveStatus: suspended is sticky', () => {
   assert.equal(sub.deriveStatus({ status: 'suspended' }), 'suspended');
 });
 
+test('startFree: active with no dates → never expires', () => {
+  const f = sub.startFree();
+  assert.equal(f.status, 'active');
+  assert.equal(f.trialEndsAt, undefined);
+  assert.equal(f.currentPeriodEnd, undefined);
+  // A free tenant with these fields stays active forever.
+  assert.equal(sub.deriveStatus({ status: 'active' }), 'active');
+  assert.equal(sub.trialDaysLeft(f), 0);
+});
+
 test('deriveStatus: trial → expired once trial end passes', () => {
   assert.equal(sub.deriveStatus({ status: 'trial', trialEndsAt: day(-1) }), 'expired');
   assert.equal(sub.deriveStatus({ status: 'trial', trialEndsAt: day(5) }), 'trial');

@@ -44,6 +44,21 @@ test('unknown override keys are ignored (no crash, no bogus grant)', () => {
   assert.ok(!ent.features.includes('also_fake'));
 });
 
+test('free tier: 5 seats, core + leave + attendance, no payroll/analytics', () => {
+  assert.equal(isValidPlan('free'), true);
+  assert.equal(resolveEntitlements({ plan: 'free' }).seatLimit, 5);
+  assert.equal(planHasModule({ plan: 'free' }, 'leave'), true);
+  assert.equal(planHasModule({ plan: 'free' }, 'attendance'), true);
+  assert.equal(planHasModule({ plan: 'free' }, 'payroll'), false);
+  assert.equal(planHasModule({ plan: 'free' }, 'analytics'), false);
+});
+
+test('free tier modules are a subset of starter (clean upgrade path)', () => {
+  const free = new Set(resolveEntitlements({ plan: 'free' }).modules);
+  const starter = new Set(resolveEntitlements({ plan: 'starter' }).modules);
+  for (const m of free) assert.ok(starter.has(m), `starter missing free module ${m}`);
+});
+
 test('unknown / missing plan falls back to starter (fail-closed)', () => {
   assert.equal(getPlan('nonsense').key, 'starter');
   assert.equal(getPlan(undefined).key, 'starter');

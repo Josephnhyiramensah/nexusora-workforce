@@ -21,11 +21,12 @@ function planBullets(p, featureLabels) {
     if (featureLabels && featureLabels[f]) bullets.push(featureLabels[f]);
   }
   if (p.key === 'enterprise') bullets.push('Dedicated onboarding & priority support');
-  bullets.push('30-day free trial · no card required');
+  // Free tier never expires; every paid plan opens on the 30-day trial.
+  bullets.push(p.key === 'free' ? 'Free forever · no card, no expiry' : '30-day free trial · no card required');
   return bullets;
 }
 
-const PLAN_ACCENT = { starter: '#3485E9', professional: '#168eff', enterprise: '#0a2c66' };
+const PLAN_ACCENT = { free: '#1f9d57', starter: '#3485E9', professional: '#168eff', enterprise: '#0a2c66' };
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -143,7 +144,7 @@ export default function RegisterPage() {
         <Link to="/login" style={sx.signIn}>Sign in <ArrowRight size={14} /></Link>
       </header>
 
-      <main style={{ maxWidth: step === 1 ? 1120 : 600, margin: '0 auto', padding: '8px 24px 72px', width: '100%', boxSizing: 'border-box' }}>
+      <main style={{ maxWidth: step === 1 ? 1180 : 600, margin: '0 auto', padding: '8px 24px 72px', width: '100%', boxSizing: 'border-box' }}>
 
         {/* ---- Step 1 · Plans ---- */}
         {step === 1 && (
@@ -180,7 +181,9 @@ export default function RegisterPage() {
                     {popular && <div style={{ ...sx.popular, background: accent }}><Sparkles size={12} /> MOST POPULAR</div>}
                     <div style={{ fontSize: 12, fontWeight: 800, color: accent, textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8 }}>{p.label}</div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minHeight: 44 }}>
-                      {meta.pricesConfigured && Number(p.price) > 0 ? (
+                      {p.key === 'free' ? (
+                        <span style={{ fontSize: 24, fontWeight: 800, color: C.navy }}>Free forever</span>
+                      ) : meta.pricesConfigured && Number(p.price) > 0 ? (
                         <>
                           <span style={{ fontSize: 30, fontWeight: 800, color: C.navy, lineHeight: 1 }}>{money(p.price, p.currency)}</span>
                           <span style={{ fontSize: 13, color: C.muted }}>/{p.interval || 'month'}</span>
@@ -201,7 +204,7 @@ export default function RegisterPage() {
                       style={{ ...sx.planCta, background: popular ? `linear-gradient(90deg, ${C.navy}, ${C.blue})` : '#fff',
                         border: popular ? 'none' : `1.5px solid ${accent}`, color: popular ? '#fff' : accent,
                         boxShadow: popular ? '0 8px 20px rgba(1,33,88,.22)' : 'none' }}>
-                      Start free trial <ArrowRight size={15} />
+                      {p.key === 'free' ? 'Get started free' : 'Start free trial'} <ArrowRight size={15} />
                     </button>
                   </div>
                 );
@@ -244,7 +247,7 @@ export default function RegisterPage() {
                 <div style={sx.selBar}>
                   <span style={{ fontSize: 13, color: C.muted }}>Selected plan</span>
                   <span style={{ fontSize: 13, fontWeight: 800, color: PLAN_ACCENT[selectedPlan.key] || C.blue }}>
-                    {selectedPlan.label}{meta.pricesConfigured && Number(selectedPlan.price) > 0 ? ` — ${money(selectedPlan.price, selectedPlan.currency)}/${selectedPlan.interval || 'mo'}` : ` — free ${meta.trialDays}-day trial`}
+                    {selectedPlan.label}{selectedPlan.key === 'free' ? ' — free forever' : meta.pricesConfigured && Number(selectedPlan.price) > 0 ? ` — ${money(selectedPlan.price, selectedPlan.currency)}/${selectedPlan.interval || 'mo'}` : ` — free ${meta.trialDays}-day trial`}
                   </span>
                   <button onClick={() => setStep(1)} style={sx.changeBtn}>Change</button>
                 </div>
@@ -326,7 +329,7 @@ export default function RegisterPage() {
                   <div style={{ display: 'flex', gap: 12 }}>
                     <button onClick={() => setStep(2)} style={sx.backBtn}><ArrowLeft size={14} /> Back</button>
                     <button onClick={submit} disabled={busy || !adminOk} style={{ ...sx.nextBtn, opacity: busy || !adminOk ? 0.55 : 1, cursor: busy || !adminOk ? 'not-allowed' : 'pointer' }}>
-                      {busy ? <><Loader2 size={16} className="nx-spin" /> Creating your workspace…</> : <>🚀 Start free trial</>}
+                      {busy ? <><Loader2 size={16} className="nx-spin" /> Creating your workspace…</> : (selectedKey === 'free' ? <>🚀 Create free workspace</> : <>🚀 Start free trial</>)}
                     </button>
                   </div>
                 </>
@@ -351,8 +354,8 @@ export default function RegisterPage() {
                   <p style={sx.scV}>{plans.find((p) => p.key === done.tenant?.plan)?.label || done.tenant?.plan}</p>
                 </div>
                 <div>
-                  <p style={sx.scK}>TRIAL</p>
-                  <p style={sx.scV}>{done.trialDaysLeft != null ? `${done.trialDaysLeft} days free` : 'Active'}</p>
+                  <p style={sx.scK}>{done.tenant?.plan === 'free' ? 'BILLING' : 'TRIAL'}</p>
+                  <p style={sx.scV}>{done.tenant?.plan === 'free' ? 'Free forever' : (done.trialDaysLeft != null ? `${done.trialDaysLeft} days free` : 'Active')}</p>
                 </div>
               </div>
             </div>
@@ -407,7 +410,7 @@ const sx = {
   pop: { animation: 'nxPop .5s both' },
 
   tintBg: '#f4f8ff',
-  planGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 20, alignItems: 'start' },
+  planGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(234px, 1fr))', gap: 18, alignItems: 'start' },
   planCard: { borderRadius: 18, padding: '30px 26px', cursor: 'pointer', position: 'relative', boxShadow: '0 10px 30px rgba(1,33,88,.07)' },
   popular: { position: 'absolute', top: -13, left: '50%', transform: 'translateX(-50%)', color: '#fff', padding: '4px 14px', borderRadius: 20, fontSize: 10.5, fontWeight: 800, letterSpacing: '.06em', display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' },
   planCta: { width: '100%', padding: 12, borderRadius: 11, fontSize: 14, fontWeight: 800, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7 },
