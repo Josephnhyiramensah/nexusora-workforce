@@ -64,12 +64,24 @@ async function connectMaster() {
   if (masterConn) return masterConn;
   const uri = masterUri();
   if (!uri) { console.warn('[db] No Mongo URI set — running without master DB (dev bootstrap).'); return null; }
-  masterConn = await mongoose.createConnection(uri, CONN_OPTS).asPromise();
+  // Create the connection ONCE and keep the reference, even if the first connect
+  // attempt fails (e.g. Atlas paused or the IP isn't whitelisted at boot). The
+  // driver's topology monitor keeps trying in the background, so when the cluster
+  // comes back the connection heals on its own — the server recovers WITHOUT a
+  // restart. Reads are gated on readyState (see getMasterConnection) so requests
+  // fail fast with a clean 503 while it's down instead of hanging.
+  masterConn = mongoose.createConnection(uri, CONN_OPTS);
   registerMasterModels(masterConn);
-  console.log(`[db] Master DB connected: ${env.TENANT_DB_PREFIX}master`);
+  masterConn.on('connected', () => console.log(`[db] Master DB connected: ${env.TENANT_DB_PREFIX}master`));
+  masterConn.on('disconnected', () => console.warn('[db] Master DB disconnected — auto-reconnecting…'));
+  masterConn.on('error', (e) => console.warn('[db] Master DB error:', e.message));
+  try { await masterConn.asPromise(); }
+  catch (e) { console.warn(`[db] Master DB not reachable at startup — retrying in background: ${e.message}`); }
   return masterConn;
 }
-function getMasterConnection() { return masterConn; }
+// Returns the master connection only when it is actually usable; null while it is
+// down/connecting, so callers emit a fast 503 instead of waiting on a timeout.
+function getMasterConnection() { return masterConn && masterConn.readyState === 1 ? masterConn : null; }
 function masterReady() { return !!masterConn && masterConn.readyState === 1; }
 function registerMasterModels(conn) {
   const Tenant = require('../models/master/Tenant');
