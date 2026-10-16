@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Check, ArrowRight, ArrowLeft, Loader2, ShieldCheck, Sparkles, Building2, UserCog } from 'lucide-react';
+import { Check, ArrowRight, ArrowLeft, Loader2, Sparkles, Building2, UserCog } from 'lucide-react';
 import api, { setSubdomain } from '../api/client';
 
 // ---- Brand palette (light — matches the system dashboard) -------------------
@@ -17,12 +17,11 @@ function planBullets(p, featureLabels) {
   const bullets = [];
   bullets.push(p.seatLimit ? `Up to ${p.seatLimit} team members` : 'Unlimited team members');
   bullets.push(`${(p.modules || []).length} HR modules included`);
-  for (const f of (p.features || []).slice(0, 3)) {
+  for (const f of (p.features || []).slice(0, 2)) {
     if (featureLabels && featureLabels[f]) bullets.push(featureLabels[f]);
   }
-  if (p.key === 'enterprise') bullets.push('Dedicated onboarding & priority support');
-  // Free tier never expires; every paid plan opens on the 30-day trial.
-  bullets.push(p.key === 'free' ? 'Free forever · no card, no expiry' : '30-day free trial · no card required');
+  if (p.key === 'enterprise') bullets.push('Dedicated onboarding & support');
+  if (p.key === 'free') bullets.push('No card, no expiry');
   return bullets;
 }
 
@@ -36,7 +35,8 @@ export default function RegisterPage() {
   const [plans, setPlans] = useState([]);
   const [meta, setMeta] = useState({ trialDays: 30, baseCurrency: 'GHS', pricesConfigured: false, featureLabels: {} });
   const [displayCur, setDisplayCur] = useState('');      // currency prices are shown in
-  const [pricesBusy, setPricesBusy] = useState(false);
+  const [pricesBusy, setPricesBusy] = useState(true);    // true until the first plan fetch resolves
+  const [plansError, setPlansError] = useState(false);   // plans fetch failed (e.g. API/DB down)
 
   const [selectedKey, setSelectedKey] = useState('professional');
   const [company, setCompany] = useState('');
@@ -59,14 +59,14 @@ export default function RegisterPage() {
   // base price (set in the admin console) into `currency` via live FX — so the
   // number shown changes with the currency, nothing about it is hardcoded.
   async function fetchPlans(currency) {
-    setPricesBusy(true);
+    setPricesBusy(true); setPlansError(false);
     try {
       const { data: pl } = await api.get('/billing/plans', currency ? { params: { currency } } : {});
       setPlans((pl.plans || []).sort((a, b) => a.order - b.order));
       setMeta({ trialDays: pl.trialDays || 30, baseCurrency: pl.baseCurrency || 'GHS',
         pricesConfigured: !!pl.pricesConfigured, featureLabels: pl.featureLabels || {} });
       if (!displayCur) setDisplayCur((pl.plans && pl.plans[0]?.currency) || pl.baseCurrency || 'GHS');
-    } catch { /* non-fatal; form still usable with defaults */ }
+    } catch { setPlansError(true); }   // surface it — never hang on "Loading…"
     finally { setPricesBusy(false); }
   }
 
@@ -151,7 +151,7 @@ export default function RegisterPage() {
           <div style={sx.fade}>
             <div style={{ textAlign: 'center', marginBottom: 28 }}>
               <h1 style={sx.h1}>Build a workforce that runs itself</h1>
-              <p style={sx.sub}>Pick a plan to start your {meta.trialDays}-day free trial. No card required — upgrade, downgrade or cancel anytime.</p>
+              <p style={sx.sub}>Start free for {meta.trialDays} days. No card required.</p>
 
               {/* Live currency switch — proves prices convert, not hardcoded */}
               {meta.pricesConfigured && (
@@ -209,11 +209,24 @@ export default function RegisterPage() {
                   </div>
                 );
               })}
-              {plans.length === 0 && <p style={{ color: C.muted, textAlign: 'center', gridColumn: '1/-1' }}>Loading plans…</p>}
+              {plans.length === 0 && (
+                <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '28px 0' }}>
+                  {pricesBusy ? (
+                    <p style={{ color: C.muted }}>Loading plans…</p>
+                  ) : (
+                    <>
+                      <p style={{ color: C.ink, fontWeight: 600, marginBottom: 4 }}>We couldn't load the plans right now.</p>
+                      <p style={{ color: C.muted, fontSize: 13, marginBottom: 14 }}>Please check your connection and try again.</p>
+                      <button onClick={() => fetchPlans(displayCur)} style={{ ...sx.planCta, display: 'inline-flex', width: 'auto', padding: '10px 22px', background: `linear-gradient(90deg, ${C.navy}, ${C.blue})`, color: '#fff', border: 'none' }}>
+                        Try again
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
-            <p style={sx.trustRow}><ShieldCheck size={14} /> Secure · multi-currency · multi-tenant · Powered by Nexusora Technologies</p>
-            <p style={{ textAlign: 'center', marginTop: 10 }}>
+            <p style={{ textAlign: 'center', marginTop: 28 }}>
               <span style={{ color: C.muted, fontSize: 13 }}>Already have a workspace? </span>
               <Link to="/login" style={{ color: C.blue, fontWeight: 700, fontSize: 13, textDecoration: 'none' }}>Sign in</Link>
             </p>
