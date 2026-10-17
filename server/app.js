@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -5,6 +6,7 @@ const compression = require('compression');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = rateLimit;
 const env = require('./config/env');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { masterReady } = require('./config/db');
@@ -69,6 +71,20 @@ app.use(require('./middleware/auditTrail').auditTrail);
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
 app.use('/api/auth', authLimiter);
+
+// Rate-limit the public, API-key-authenticated surface (/api/v1) to curb abuse
+// and key brute-forcing. Keyed per API key (hashed, so raw keys never sit in the
+// limiter store) and per IP otherwise.
+const apiKeyLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req) => {
+    const h = req.headers.authorization || '';
+    const key = h.startsWith('Bearer ') ? h.slice(7) : (req.headers['x-api-key'] || '');
+    return key ? 'k:' + crypto.createHash('sha256').update(key).digest('hex').slice(0, 24) : ipKeyGenerator(req.ip || '');
+  },
+  message: { success: false, message: 'Rate limit exceeded — slow down and try again shortly.' },
+});
+app.use('/api/v1', apiKeyLimiter);
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
