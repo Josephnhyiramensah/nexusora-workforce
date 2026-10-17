@@ -53,6 +53,9 @@ export function CurrencyProvider({ children }) {
   // overrides (manual wins). If the endpoint isn't there yet, we stay base-only
   // and conversion is a safe no-op.
   useEffect(() => {
+    // Only fetch once signed in — /fx/rates needs auth, so calling it on the
+    // public login/register pages just 401s and clutters the console.
+    if (!user) return undefined;
     let alive = true;
     (async () => {
       try {
@@ -63,7 +66,7 @@ export function CurrencyProvider({ children }) {
       } catch { /* no rates yet — base only */ }
     })();
     return () => { alive = false; };
-  }, [baseCurrency]);
+  }, [baseCurrency, user]);
 
   const setDisplayCurrency = useCallback((cur) => {
     const c = String(cur || baseCurrency).toUpperCase();
