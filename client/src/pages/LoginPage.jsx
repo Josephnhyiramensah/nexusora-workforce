@@ -23,9 +23,12 @@ export default function LoginPage() {
   const [useBackup, setUseBackup] = useState(false);
 
   async function submit() {
+    // Tell the user WHY nothing happens instead of silently disabling the button.
+    if (!hostSub && !subdomain.trim()) { setError('Enter your workspace name to sign in.'); return; }
+    if (!email || !password) { setError('Enter your email and password.'); return; }
     setError(''); setBusy(true);
     try {
-      const res = await login(subdomain, email, password);
+      const res = await login(subdomain.trim(), email, password);
       if (res?.twoFactorRequired) { setChallengeToken(res.challengeToken); setStage('2fa'); }
       else navigate('/');
     }
@@ -90,6 +93,9 @@ export default function LoginPage() {
                   </IconBox>
                   <input value={subdomain} onChange={(e) => setSubdomain(e.target.value)} onKeyDown={onEnter}
                     placeholder="your-workspace" style={inputStyle(C)} />
+                  <div style={{ fontSize: '.74rem', color: C.muted, marginTop: 5 }}>
+                    Your company's workspace name — the part before <b>.nexusoraworkforce.com</b>.
+                  </div>
                 </Field>
               )}
 
@@ -151,11 +157,11 @@ export default function LoginPage() {
           )}
 
           {stage === 'creds' ? (
-            <button onClick={submit} disabled={busy || !email || !password || (!hostSub && !subdomain)}
-              style={{ width: '100%', padding: '13px', border: 'none', borderRadius: 12, cursor: 'pointer',
+            <button onClick={submit} disabled={busy}
+              style={{ width: '100%', padding: '13px', border: 'none', borderRadius: 12, cursor: busy ? 'default' : 'pointer',
                 color: '#fff', fontWeight: 700, fontSize: '1rem',
                 background: `linear-gradient(90deg, ${C.navy}, ${C.blue})`,
-                opacity: busy || !email || !password || (!hostSub && !subdomain) ? 0.6 : 1,
+                opacity: busy ? 0.6 : 1,
                 boxShadow: '0 8px 20px rgba(1,33,88,.25)' }}>
               {busy ? 'Signing in…' : 'Sign In'}
             </button>
