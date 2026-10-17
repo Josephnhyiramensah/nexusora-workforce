@@ -60,23 +60,57 @@ function masterUri() {
   return uriForDb(`${env.TENANT_DB_PREFIX}master`);
 }
 
+// Standard lifecycle logs for a master connection. Attached AFTER the initial
+// connect, so the 'connected' handler covers later reconnects (the first
+// connect is logged inline).
+function attachMasterEvents(conn) {
+  conn.on('connected', () => console.log(`[db] Master DB connected: ${env.TENANT_DB_PREFIX}master`));
+  conn.on('disconnected', () => console.warn('[db] Master DB disconnected — auto-reconnecting…'));
+  conn.on('error', (e) => console.warn('[db] Master DB error:', e.message));
+}
+
+// First-connect resilience. Atlas over a high-latency / NAT'd dev link
+// intermittently misses the 10s server-selection window on the very FIRST
+// handshake — the standalone db-doctor connects in ~2s, but the app's one-shot
+// startup connect sometimes loses that race and then does NOT recover, leaving
+// master "down" until a manual restart. So instead of a single attempt, retry a
+// few times with backoff; each attempt is a fresh connection with the previous
+// one closed, so no half-open sockets accumulate. Tunable via env. Still
+// non-fatal: if every attempt fails we keep one live connection whose background
+// monitor can heal it later, and getMasterConnection() returns null (clean 503s)
+// until it does.
+const DB_CONNECT_RETRIES = Number(process.env.DB_CONNECT_RETRIES || 5);
+const DB_CONNECT_BACKOFF_MS = Number(process.env.DB_CONNECT_BACKOFF_MS || 3000);
+
 async function connectMaster() {
-  if (masterConn) return masterConn;
+  if (masterConn && masterConn.readyState === 1) return masterConn;
   const uri = masterUri();
   if (!uri) { console.warn('[db] No Mongo URI set — running without master DB (dev bootstrap).'); return null; }
-  // Create the connection ONCE and keep the reference, even if the first connect
-  // attempt fails (e.g. Atlas paused or the IP isn't whitelisted at boot). The
-  // driver's topology monitor keeps trying in the background, so when the cluster
-  // comes back the connection heals on its own — the server recovers WITHOUT a
-  // restart. Reads are gated on readyState (see getMasterConnection) so requests
-  // fail fast with a clean 503 while it's down instead of hanging.
+
+  for (let attempt = 1; attempt <= DB_CONNECT_RETRIES; attempt++) {
+    const conn = mongoose.createConnection(uri, CONN_OPTS);
+    try {
+      await conn.asPromise();
+      masterConn = conn;
+      registerMasterModels(masterConn);
+      attachMasterEvents(masterConn);
+      console.log(`[db] Master DB connected: ${env.TENANT_DB_PREFIX}master`);
+      return masterConn;
+    } catch (e) {
+      try { await conn.close(); } catch { /* ignore */ }
+      const more = attempt < DB_CONNECT_RETRIES;
+      console.warn(`[db] Master DB connect ${attempt}/${DB_CONNECT_RETRIES} failed: ${String(e.message).split('\n')[0]}${more ? ` — retrying in ${DB_CONNECT_BACKOFF_MS / 1000}s…` : ''}`);
+      if (more) await new Promise((r) => setTimeout(r, DB_CONNECT_BACKOFF_MS));
+    }
+  }
+
+  // Exhausted retries: keep one live connection so the driver's background
+  // monitor can still heal it without a restart; stays "down" until it does.
   masterConn = mongoose.createConnection(uri, CONN_OPTS);
   registerMasterModels(masterConn);
-  masterConn.on('connected', () => console.log(`[db] Master DB connected: ${env.TENANT_DB_PREFIX}master`));
-  masterConn.on('disconnected', () => console.warn('[db] Master DB disconnected — auto-reconnecting…'));
-  masterConn.on('error', (e) => console.warn('[db] Master DB error:', e.message));
-  try { await masterConn.asPromise(); }
-  catch (e) { console.warn(`[db] Master DB not reachable at startup — retrying in background: ${e.message}`); }
+  attachMasterEvents(masterConn);
+  masterConn.asPromise().catch(() => { /* background monitor keeps retrying */ });
+  console.warn(`[db] Master DB unreachable after ${DB_CONNECT_RETRIES} attempts — serving 503s until it heals in the background.`);
   return masterConn;
 }
 // Returns the master connection only when it is actually usable; null while it is
