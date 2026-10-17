@@ -7,6 +7,21 @@ const { verifyTotp } = require('../../utils/twoFactor');
 const emailSvc = require('../../services/email.service');
 const { resolveEntitlements } = require('../../config/plans');
 const { seatLimit } = require('../../services/subscription.service');
+const { isValidPermission, isValidScope } = require('../../config/permissions');
+
+// Keep only well-formed ACL overrides (E4): a grant needs a valid permission AND
+// scope; a revoke needs a valid permission (scope ignored). Anything else is
+// dropped so a bad payload can never corrupt a user's effective permissions.
+function sanitizeOverrides(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const o of arr) {
+    if (!o || !isValidPermission(o.permission)) continue;
+    if (o.effect === 'grant' && isValidScope(o.scope)) out.push({ permission: o.permission, effect: 'grant', scope: o.scope });
+    else if (o.effect === 'revoke') out.push({ permission: o.permission, effect: 'revoke' });
+  }
+  return out;
+}
 
 function safeUser(u) {
   // `employee` may be a bare id or a populated doc (in listUsers). Always expose the id
@@ -14,7 +29,7 @@ function safeUser(u) {
   const linked = u.employee && typeof u.employee === 'object' && u.employee._id ? u.employee : null;
   return {
     id: u._id, name: u.name, email: u.email, role: u.role,
-    permissions: u.permissions, locale: u.locale, isActive: u.isActive,
+    permissions: u.permissions, permissionOverrides: u.permissionOverrides || [], locale: u.locale, isActive: u.isActive,
     mustChangePassword: !!u.mustChangePassword, createdAt: u.createdAt,
     employee: linked ? linked._id : (u.employee || null),   // linked employee id
     employeeName: linked ? [linked.firstName, linked.lastName].filter(Boolean).join(' ') : undefined,
@@ -187,7 +202,7 @@ const listUsers = asyncHandler(async (req, res) => {
 
 // PUT /api/auth/users/:id — edit name/role/locale/permissions and the linked employee (not password).
 const updateUser = asyncHandler(async (req, res) => {
-  const { name, role, locale, permissions, employee } = req.body;
+  const { name, role, locale, permissions, permissionOverrides, employee } = req.body;
   const User = req.tenantConn.model('User');
   const user = await User.findById(req.params.id);
   if (!user) return res.status(404).json({ message: 'User not found' });
@@ -195,6 +210,7 @@ const updateUser = asyncHandler(async (req, res) => {
   if (role !== undefined) user.role = role;
   if (locale !== undefined) user.locale = locale;
   if (permissions !== undefined) user.permissions = permissions;
+  if (permissionOverrides !== undefined) user.permissionOverrides = sanitizeOverrides(permissionOverrides);
   if (employee !== undefined) user.employee = employee || null;   // '' / null clears the link
   await user.save();
   res.json({ user: safeUser(user) });
@@ -381,5 +397,5 @@ module.exports = {
   // reused by A2 self-signup
   issueEmailVerification,
   // exported for tests
-  needsEmailVerification,
+  needsEmailVerification, sanitizeOverrides,
 };

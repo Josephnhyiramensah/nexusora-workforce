@@ -11,6 +11,17 @@ const schema = new mongoose.Schema({
   password: { type: String, required: true, select: false },
   role: { type: String, enum: ROLES, default: 'employee' },
   permissions: { type: [String], default: [] },     // granular grants on top of role
+  // Per-user ACL overrides (E4) on top of the role defaults. The resolver
+  // (utils/acl.js) expands role defaults, applies grants, then revokes (revoke
+  // wins). Shape: { permission: 'leave.approve', effect: 'grant'|'revoke', scope }.
+  permissionOverrides: {
+    type: [new mongoose.Schema({
+      permission: { type: String, required: true },
+      effect: { type: String, enum: ['grant', 'revoke'], required: true },
+      scope: { type: String, enum: ['all', 'unit', 'team', 'self'] },  // required for grants
+    }, { _id: false })],
+    default: [],
+  },
   locale: { type: String, default: DEFAULT_LOCALE }, // user's preferred UI language
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
   twoFactorEnabled: { type: Boolean, default: false },
