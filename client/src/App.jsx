@@ -32,6 +32,7 @@ import EmployeeRelationsPage from './pages/EmployeeRelationsPage';
 import AIAdvisorPage from './pages/AIAdvisorPage';
 import WelfareSocialPage from './pages/WelfareSocialPage';
 import EngagementPage from './pages/EngagementPage';
+import AuditLogPage from './pages/AuditLogPage';
 export default function App() {
   return (
     <CurrencyProvider>
@@ -66,6 +67,7 @@ export default function App() {
       <Route path="/ai-advisor" element={<ProtectedRoute><AppShell><AIAdvisorPage /></AppShell></ProtectedRoute>} />
       <Route path="/welfare" element={<ProtectedRoute><AppShell><WelfareSocialPage /></AppShell></ProtectedRoute>} />
       <Route path="/engagement" element={<ProtectedRoute><AppShell><EngagementPage /></AppShell></ProtectedRoute>} />
+      <Route path="/audit" element={<ProtectedRoute><AppShell><AuditLogPage /></AppShell></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </CurrencyProvider>

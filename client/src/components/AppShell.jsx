@@ -12,7 +12,7 @@ import { C, FONT, initials, fullName } from '../ui/tokens';
 import {
   Home, Users, Wallet, Gauge, BarChart3, Grid3x3, Search, LogOut, Settings,
   Building2, Briefcase, FileText, UserPlus, ClipboardCheck, CalendarClock, CalendarDays,
-  ShieldCheck, TrendingUp, GraduationCap, Network, HeartHandshake, Scale, Sparkles, IdCard, Smile,
+  ShieldCheck, TrendingUp, GraduationCap, Network, HeartHandshake, Scale, Sparkles, IdCard, Smile, ScrollText,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import ErrorBoundary from './ErrorBoundary';
@@ -51,8 +51,12 @@ const MODULES = [
     { label: 'Documents', to: '/documents', Icon: FileText, accent: '#0b6fd6' },
     { label: 'Workforce Planning', to: '/workforce-planning', Icon: Gauge, accent: '#17a2b8' },
     { label: 'Workforce Intelligence', to: '/ai-advisor', Icon: Sparkles, accent: '#7c5cdf' },
+    { label: 'Audit Log', to: '/audit', Icon: ScrollText, accent: '#012158', adminOnly: true },
   ] },
 ];
+
+// The audit trail is an admin/compliance surface — workspace owners & HR managers.
+const AUDIT_ROLES = ['super_admin', 'hr_manager'];
 
 const PRIMARY = [
   { label: 'Home', tKey: 'nav.home', to: '/', Icon: Home, match: (p) => p === '/' },
@@ -71,6 +75,7 @@ export default function AppShell({ children }) {
   const [menu, setMenu] = useState(false);
   const name = user?.name || fullName(user) || user?.email || 'User';
   const onHome = loc.pathname === '/';
+  const isAdmin = AUDIT_ROLES.includes(user?.role);
 
   function go(to) { setLauncher(false); nav(to); }
   function doLogout() { setMenu(false); if (typeof logout === 'function') logout(); else nav('/login'); }
@@ -109,6 +114,7 @@ export default function AppShell({ children }) {
                 <div style={{ position: 'absolute', right: 0, top: 46, width: 220, background: '#fff', border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: '0 14px 40px rgba(1,33,88,.16)', zIndex: 41, overflow: 'hidden' }}>
                   <div style={{ padding: '13px 15px', borderBottom: `1px solid ${C.lineSoft}` }}><div style={{ fontWeight: 700, color: C.navy, fontSize: '.9rem' }}>{name}</div><div style={{ fontSize: '.75rem', color: C.muted2 }}>{cap(user?.role) || 'Signed in'}</div></div>
                   <button onClick={() => { setMenu(false); nav('/settings'); }} style={menuItem}><Settings size={15} /> {t('common.settings')}</button>
+                  {isAdmin && <button onClick={() => { setMenu(false); nav('/audit'); }} style={menuItem}><ScrollText size={15} /> {t('common.auditLog')}</button>}
                   <button onClick={doLogout} style={{ ...menuItem, color: C.red }}><LogOut size={15} /> {t('common.signOut')}</button>
                 </div>
               </>
@@ -128,7 +134,7 @@ export default function AppShell({ children }) {
                 <div key={g.group}>
                   <div style={{ fontSize: '.66rem', fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted, marginBottom: 8 }}>{g.group}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {g.items.map((m) => { const on = loc.pathname.startsWith(m.to); const Icon = m.Icon; return (
+                    {g.items.filter((m) => !m.adminOnly || isAdmin).map((m) => { const on = loc.pathname.startsWith(m.to); const Icon = m.Icon; return (
                       <button key={m.to} onClick={() => go(m.to)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 10px', borderRadius: 10, border: 'none', cursor: 'pointer', textAlign: 'left', background: on ? '#eef4ff' : 'transparent', color: on ? C.navy : C.ink, fontWeight: on ? 700 : 500, fontSize: '.85rem' }}>
                         <span style={{ width: 30, height: 30, borderRadius: 8, flex: 'none', display: 'grid', placeItems: 'center', background: m.accent + '15', color: m.accent }}><Icon size={16} /></span>
                         {m.label}
