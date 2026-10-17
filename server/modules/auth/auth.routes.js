@@ -31,6 +31,7 @@ router.post('/2fa/disable', protect, resolveTenant, tf.disable);
 router.post('/2fa/regenerate-backup-codes', protect, resolveTenant, tf.regenerateBackupCodes);
 
 // User administration
+router.get('/permissions/catalog', protect, resolveTenant, authorise(...VIEW_USERS), c.permissionsCatalog);
 router.get('/users', protect, resolveTenant, authorise(...VIEW_USERS), c.listUsers);
 router.post('/users', protect, resolveTenant, authorise(...ADMIN), c.createUser);
 router.put('/users/:id', protect, resolveTenant, authorise(...ADMIN), c.updateUser);

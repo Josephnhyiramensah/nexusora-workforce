@@ -382,6 +382,17 @@ function UserModal({ mode, user, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
+  // Per-user permission overrides (E4). ov maps permission -> {effect, scope}.
+  const [catalog, setCatalog] = useState(null);
+  const [showPerms, setShowPerms] = useState(false);
+  const [ov, setOv] = useState(() => {
+    const m = {};
+    for (const o of (user?.permissionOverrides || [])) {
+      if (o && o.permission) m[o.permission] = o.effect === 'grant' ? { effect: 'grant', scope: o.scope || 'all' } : { effect: 'revoke' };
+    }
+    return m;
+  });
+
   // Load the employee list for the picker.
   useEffect(() => {
     let alive = true;
@@ -394,13 +405,39 @@ function UserModal({ mode, user, onClose, onSaved }) {
     return () => { alive = false; };
   }, []);
 
+  // Load the ACL catalog once, only when editing (overrides apply to real users).
+  useEffect(() => {
+    if (!editing) return;
+    let alive = true;
+    (async () => {
+      try { const { data } = await api.get('/auth/permissions/catalog'); if (alive) setCatalog(data); }
+      catch { /* section just won't render if this fails */ }
+    })();
+    return () => { alive = false; };
+  }, [editing]);
+
   const empLabel = (x) => `${[x?.firstName, x?.lastName].filter(Boolean).join(' ')}${x?.staffId ? ` · ${x.staffId}` : ''}`;
+
+  // Scope the current role grants a permission by default ('*' = everything).
+  const roleMap = (catalog?.roleDefaults || {})[f.role] || {};
+  const defaultScope = (p) => roleMap['*'] || roleMap[p] || null;
+  const overridesArray = () => Object.entries(ov).map(([permission, v]) =>
+    v.effect === 'grant' ? { permission, effect: 'grant', scope: v.scope } : { permission, effect: 'revoke' });
+  function setOverride(p, state, scope) {
+    setOv((s) => {
+      const n = { ...s };
+      if (state === 'inherit') delete n[p];
+      else if (state === 'grant') n[p] = { effect: 'grant', scope: scope || n[p]?.scope || defaultScope(p) || 'all' };
+      else n[p] = { effect: 'revoke' };
+      return n;
+    });
+  }
 
   async function submit() {
     setBusy(true); setErr('');
     try {
       if (editing) {
-        await api.put(`/auth/users/${user.id}`, { name: f.name, role: f.role, employee: emp || '' });
+        await api.put(`/auth/users/${user.id}`, { name: f.name, role: f.role, employee: emp || '', permissionOverrides: overridesArray() });
         if (f.password) await api.post(`/auth/users/${user.id}/reset-password`, { password: f.password });
         onSaved(`${f.name} updated.`);
       } else {
@@ -411,9 +448,14 @@ function UserModal({ mode, user, onClose, onSaved }) {
     finally { setBusy(false); }
   }
 
+  const groupedPerms = Object.entries((catalog?.permissions || []).reduce((acc, p) => {
+    const r = p.split('.')[0]; (acc[r] = acc[r] || []).push(p); return acc;
+  }, {}));
+  const ovCount = Object.keys(ov).length;
+
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(1,33,88,.5)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'center', padding: 20, zIndex: 60 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, background: '#fff', borderRadius: 18, padding: 24, boxShadow: '0 18px 44px rgba(1,33,88,.3)', borderTop: `4px solid ${C.navy}` }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '90vh', overflowY: 'auto', background: '#fff', borderRadius: 18, padding: 24, boxShadow: '0 18px 44px rgba(1,33,88,.3)', borderTop: `4px solid ${C.navy}` }}>
         <h2 style={{ color: C.navy, fontSize: '1.25rem', fontWeight: 800, margin: '0 0 16px' }}>{editing ? 'Edit user' : 'Add user'}</h2>
         <Field label="Full name" value={f.name} onChange={(v) => setF((s) => ({ ...s, name: v }))} />
         <Field label="Email" value={f.email} onChange={(v) => setF((s) => ({ ...s, email: v }))} disabled={editing} />
@@ -438,6 +480,53 @@ function UserModal({ mode, user, onClose, onSaved }) {
         <div style={{ fontSize: '.78rem', color: C.muted, marginBottom: 14 }}>
           The user will be required to set their own password at first login.
         </div>
+
+        {/* Per-user permission overrides (E4) — edit mode only */}
+        {editing && catalog && (
+          <div style={{ marginBottom: 14 }}>
+            <button type="button" onClick={() => setShowPerms((v) => !v)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f4f7fc', border: `1px solid ${C.line}`, borderRadius: 10, padding: '10px 12px', cursor: 'pointer', color: C.navy, fontWeight: 700, fontSize: '.85rem' }}>
+              <span>Advanced permissions{ovCount ? ` · ${ovCount} override${ovCount > 1 ? 's' : ''}` : ''}</span>
+              <span style={{ color: C.muted }}>{showPerms ? '▾' : '▸'}</span>
+            </button>
+            {showPerms && (
+              <div style={{ marginTop: 8, maxHeight: 240, overflowY: 'auto', border: `1px solid ${C.line}`, borderRadius: 10, padding: 10 }}>
+                <div style={{ fontSize: '.74rem', color: C.muted, marginBottom: 8, lineHeight: 1.5 }}>
+                  Fine-tune this user's access beyond their role. <b>Inherit</b> keeps the role default; <b>Grant</b> adds access at a scope; <b>Revoke</b> removes it.
+                </div>
+                {groupedPerms.map(([resource, perms]) => (
+                  <div key={resource} style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: '.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: C.navy, margin: '2px 0 4px' }}>{resource}</div>
+                    {perms.map((p) => {
+                      const cur = ov[p]; const state = !cur ? 'inherit' : cur.effect; const def = defaultScope(p);
+                      return (
+                        <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                          <div style={{ flex: 1, fontSize: '.8rem', color: C.ink }}>
+                            {p.split('.')[1]}
+                            <span style={{ color: C.muted, fontSize: '.68rem' }}> · role: {def || '—'}</span>
+                          </div>
+                          <select value={state} onChange={(e) => setOverride(p, e.target.value)}
+                            style={{ ...inp(), width: 'auto', padding: '4px 6px', fontSize: '.74rem', marginBottom: 0 }}>
+                            <option value="inherit">Inherit</option>
+                            <option value="grant">Grant</option>
+                            <option value="revoke">Revoke</option>
+                          </select>
+                          {state === 'grant' && (
+                            <select value={cur.scope} onChange={(e) => setOverride(p, 'grant', e.target.value)}
+                              style={{ ...inp(), width: 'auto', padding: '4px 6px', fontSize: '.74rem', marginBottom: 0 }}>
+                              {catalog.scopes.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {err && <div style={{ color: C.red, background: '#fdecec', border: '1px solid #f6c9cb', padding: '9px 12px', borderRadius: 10, fontSize: '.85rem', marginBottom: 12 }}>{err}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <SmallBtn onClick={onClose}>Cancel</SmallBtn>

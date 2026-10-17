@@ -7,7 +7,7 @@ const { verifyTotp } = require('../../utils/twoFactor');
 const emailSvc = require('../../services/email.service');
 const { resolveEntitlements } = require('../../config/plans');
 const { seatLimit } = require('../../services/subscription.service');
-const { isValidPermission, isValidScope } = require('../../config/permissions');
+const { isValidPermission, isValidScope, PERMISSIONS, SCOPES, ROLE_PERMISSIONS } = require('../../config/permissions');
 
 // Keep only well-formed ACL overrides (E4): a grant needs a valid permission AND
 // scope; a revoke needs a valid permission (scope ignored). Anything else is
@@ -186,6 +186,13 @@ const createUser = asyncHandler(async (req, res) => {
   // Fire-and-forget welcome email (never blocks the response; skips if SMTP off).
   emailSvc.sendWelcome({ to: user.email, name: user.name, tenant: req.tenant, tempPassword: password })
     .catch((e) => console.error('[email] welcome failed:', e && e.message));
+});
+
+// GET /api/auth/permissions/catalog — the ACL vocabulary the admin UI needs to
+// render the per-user override editor (E4): every permission, the scopes, and
+// each role's default grants.
+const permissionsCatalog = asyncHandler(async (req, res) => {
+  res.json({ permissions: PERMISSIONS, scopes: SCOPES, roleDefaults: ROLE_PERMISSIONS });
 });
 
 // GET /api/auth/users  (optional ?employee=<id> — used to check if a person has a login)
@@ -391,7 +398,7 @@ const updateProfile = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  login, loginVerify, me, createUser, listUsers, updateUser, setUserStatus,
+  login, loginVerify, me, createUser, listUsers, updateUser, setUserStatus, permissionsCatalog,
   adminResetPassword, changePassword, updateProfile,
   forgotPassword, resetPassword, verifyEmail, resendVerification,
   // reused by A2 self-signup
