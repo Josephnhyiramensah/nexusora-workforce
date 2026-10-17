@@ -31,6 +31,12 @@ const env = {
   // (local dev), tenant links fall back to APP_URL + ?workspace= hint.
   APP_BASE_DOMAIN: (process.env.APP_BASE_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase(),
 
+  // Require self-signup owners to verify their email before they can sign in.
+  // Only ever enforced when SMTP is actually configured (so a workspace is never
+  // locked out when no verification email could be sent). Admin-created team
+  // members are pre-verified, so this gate only affects unverified self-signups.
+  REQUIRE_EMAIL_VERIFICATION: String(process.env.REQUIRE_EMAIL_VERIFICATION || 'true').toLowerCase() !== 'false',
+
   // Overdue reminder sweep.
   REMINDERS_ENABLED: String(process.env.REMINDERS_ENABLED || 'true').toLowerCase() !== 'false',
   REMINDER_HOUR: parseInt(process.env.REMINDER_HOUR, 10) || 7, // local server hour, 0–23

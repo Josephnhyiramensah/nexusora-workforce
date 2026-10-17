@@ -48,6 +48,15 @@ function issueSession(res, user, tenant, extra = {}) {
 const MAX_FAILS = 6;
 const LOCK_MINUTES = 15;
 
+// Email-verification gate (C4). Pure + testable. A sign-in is blocked only when
+// enforcement is on, SMTP is configured (so we CAN send a link — otherwise a
+// workspace could be permanently locked out), and the account is explicitly
+// unverified. Admin-created members are pre-verified, so this only affects
+// unverified self-signup owners.
+function needsEmailVerification(user, { enforce, smtpConfigured } = {}) {
+  return !!(enforce && smtpConfigured && user && user.emailVerified === false);
+}
+
 // POST /api/auth/login
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
@@ -72,6 +81,12 @@ const login = asyncHandler(async (req, res) => {
   if (user.failedLoginAttempts || user.lockUntil) {
     user.failedLoginAttempts = 0; user.lockUntil = undefined;
     await user.save({ validateBeforeSave: false });
+  }
+  // Email-verification gate (C4): block unverified self-signup owners and send a
+  // fresh link so they can confirm and come back. Never blocks when SMTP is off.
+  if (needsEmailVerification(user, { enforce: env.REQUIRE_EMAIL_VERIFICATION, smtpConfigured: emailSvc.isConfigured() })) {
+    issueEmailVerification(user, req.tenant).catch((e) => console.error('[email] verification resend failed:', e && e.message));
+    return res.status(403).json({ code: 'email_unverified', message: "Please verify your email to sign in — we've just sent you a fresh verification link." });
   }
   // If the user has 2FA enabled, don't issue a session yet — return a short-lived
   // challenge and require the second factor via POST /auth/2fa/login.
@@ -148,6 +163,9 @@ const createUser = asyncHandler(async (req, res) => {
     permissions: permissions || [], locale: locale || req.tenant.defaultLocale,
     employee: employee || undefined,   // optional link to an employee record
     mustChangePassword: true,
+    // Admin-created members are vouched for by the admin and get a temp password,
+    // not a verification link — so they're pre-verified (never email-gated).
+    emailVerified: true,
   });
   res.status(201).json({ user: safeUser(user) });
   // Fire-and-forget welcome email (never blocks the response; skips if SMTP off).
@@ -362,4 +380,6 @@ module.exports = {
   forgotPassword, resetPassword, verifyEmail, resendVerification,
   // reused by A2 self-signup
   issueEmailVerification,
+  // exported for tests
+  needsEmailVerification,
 };
