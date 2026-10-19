@@ -199,7 +199,8 @@ export function Kpi({ Icon, iconColor = C.accentInk, iconBg = '#e6f1fd', pill, l
   return <div style={base}>{inner}</div>;
 }
 export function Body({ children, cols }) {
-  return <section className="nx-body" style={{ padding: '26px 32px 0', display: 'grid', gridTemplateColumns: cols || '1fr', gap: 22, alignItems: 'start' }}>{children}</section>;
+  const mobile = useIsMobile();
+  return <section className="nx-body" style={{ padding: '26px 32px 0', display: 'grid', gridTemplateColumns: mobile ? '1fr' : (cols || '1fr'), gap: mobile ? 14 : 22, alignItems: 'start' }}>{children}</section>;
 }
 /* Segmented control — in-page tabs. items: [[key,label], …] */
 export function Segmented({ items, active, onSelect }) {
@@ -237,12 +238,13 @@ export function HeroBtn({ children, Icon, ghost, onClick, type = 'button' }) {
   return <button type={type} onClick={onClick} style={style}>{Icon && <Icon size={16} />}{children}</button>;
 }
 export function Card({ title, sub, right, children, pad }) {
+  const mobile = useIsMobile();
   return (
     <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, boxShadow: '0 1px 2px rgba(1,33,88,.05)' }}>
-      {(title || right) && <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '15px 20px', borderBottom: `1px solid ${C.lineSoft}` }}>
+      {(title || right) && <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '15px 20px', borderBottom: `1px solid ${C.lineSoft}`, flexWrap: 'wrap' }}>
         {title && <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: C.navy }}>{title}</h2>}
         {sub && <span style={{ fontSize: '.78rem', color: C.muted2 }}>· {sub}</span>}
-        {right && <div style={{ marginLeft: 'auto' }}>{right}</div>}
+        {right && <div style={{ marginLeft: mobile ? 0 : 'auto', width: mobile ? '100%' : 'auto' }}>{right}</div>}
       </div>}
       <div style={{ padding: pad != null ? pad : (title || right ? '14px 20px 18px' : 18) }}>{children}</div>
     </div>
@@ -342,7 +344,7 @@ export function Overlay({ children, onClose, title, width = 520 }) {
 }
 export function Field({ label, value, onChange, type = 'text', placeholder }) { return <label style={{ display: 'block', marginBottom: 12 }}><Lbl>{label}</Lbl><input type={type} value={value ?? ''} placeholder={placeholder || ''} onChange={(e) => onChange(e.target.value)} style={inp} /></label>; }
 export function Sel({ label, value, onChange, options }) { return <label style={{ display: 'block', marginBottom: 12 }}><Lbl>{label}</Lbl><select value={value} onChange={(e) => onChange(e.target.value)} style={inp}>{options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>; }
-export function Row2({ children }) { return <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>{children}</div>; }
+export function Row2({ children }) { const mobile = useIsMobile(); return <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr', gap: 10 }}>{children}</div>; }
 export function Lbl({ children }) { return <div style={{ fontSize: '.68rem', color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>{children}</div>; }
 export function Actions({ onClose, onSubmit, busy, label }) { return <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}><button onClick={onClose} style={ghostBtn}>Cancel</button><button onClick={onSubmit} disabled={busy} style={primaryBtn}>{busy ? 'Saving…' : label}</button></div>; }
 export function ErrBox({ children }) { return <div style={{ background: C.redBg, border: '1px solid #f6c9cb', color: C.red, padding: '9px 12px', borderRadius: 9, fontSize: '.84rem', marginBottom: 12 }}>{children}</div>; }
