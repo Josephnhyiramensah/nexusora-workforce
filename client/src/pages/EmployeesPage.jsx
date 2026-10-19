@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import {
   RouteShell, Hero, KpiBand, Kpi, Body, Card, EmpCell, Pill, Empty,
-  HeroBtn, TableWrap,
+  HeroBtn, DataTable,
 } from '../ui/kit';
 import {
   C, NUM, cap, fullName, ghostBtn, rowStyle, td,
@@ -161,18 +161,18 @@ export default function EmployeesPage() {
           </div>
         }>
           {loading ? <Empty>{t('common.loading')}</Empty> : rows.length === 0 ? <Empty>{empFilter ? t('employees.noneFilter') : t('employees.none')}</Empty> : (
-            <TableWrap head={[[t('employees.employee')], [t('employees.department')], [t('employees.workerClass')], [t('employees.type')], [t('employees.status')], ['', 'r']]}>
-              {rows.map((e) => (
-                <tr key={e._id} className="nx-row" onClick={() => openProfile(e)} style={rowStyle}>
-                  <td style={td}><EmpCell e={{ firstName: e.firstName, lastName: e.lastName, jobTitle: e.employment?.jobTitle }} /></td>
-                  <td style={td}>{deptOf(e) || '—'}{sectionOf(e) ? <div style={{ fontSize: '.72rem', color: C.muted2 }}>{sectionOf(e)}</div> : null}</td>
-                  <td style={td}>{wcLabel(e.employment?.workerClass)}</td>
-                  <td style={td}><Pill tone="grey">{etLabel(e.employment?.employmentType)}</Pill></td>
-                  <td style={td}>{statusPill(e.status, t)}</td>
-                  <td style={{ ...td, textAlign: 'right' }}><ChevronRight size={16} color={C.muted2} /></td>
-                </tr>
-              ))}
-            </TableWrap>
+            <DataTable
+              rows={rows}
+              onRowClick={openProfile}
+              columns={[
+                { label: t('employees.employee'), render: (e) => <EmpCell e={{ firstName: e.firstName, lastName: e.lastName, jobTitle: e.employment?.jobTitle }} /> },
+                { label: t('employees.department'), render: (e) => <span>{deptOf(e) || '—'}{sectionOf(e) ? <div style={{ fontSize: '.72rem', color: C.muted2 }}>{sectionOf(e)}</div> : null}</span> },
+                { label: t('employees.workerClass'), render: (e) => wcLabel(e.employment?.workerClass) },
+                { label: t('employees.type'), render: (e) => <Pill tone="grey">{etLabel(e.employment?.employmentType)}</Pill> },
+                { label: t('employees.status'), render: (e) => statusPill(e.status, t) },
+                { label: '', align: 'r', mobileHide: true, render: () => <ChevronRight size={16} color={C.muted2} /> },
+              ]}
+            />
           )}
           {!loading && !empFilter && data.pages > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 }}>

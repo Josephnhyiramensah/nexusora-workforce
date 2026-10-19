@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import LeaveRequestForm from '../components/LeaveRequestForm';
 import { CalendarClock, CalendarDays, Wallet, ShieldCheck, Plus, Clock, UserCheck, Inbox, Plane } from 'lucide-react';
 import {
-  RouteShell, Hero, KpiBand, Kpi, Body, Card, Empty, Segmented, Pill, TableWrap, HeroBtn,
+  RouteShell, Hero, KpiBand, Kpi, Body, Card, Empty, Segmented, Pill, TableWrap, DataTable, HeroBtn,
 } from '../ui/kit';
 import { C, NUM, cap, fmtDate, fullName, rowStyle, td, miniBtn, ghostBtn } from '../ui/tokens';
 
@@ -78,23 +78,22 @@ export default function LeavePage() {
           {tab === 'balance' ? <BalanceTab /> : (
             <Card title={tab === 'approvals' ? t('leave.approvals') : t('leave.allRequests')} sub={loading ? '' : `${rows.length}`}>
               {loading ? <Empty>{t('common.loading')}</Empty> : rows.length === 0 ? <Empty>{t('leave.none')}</Empty> : (
-                <TableWrap head={[[t('leave.employee')], [t('leave.type')], [t('leave.dates')], [t('leave.days'), 'r'], [t('leave.status')], (tab === 'approvals' && canApprove) ? ['', 'r'] : ['']]}>
-                  {rows.map((r) => (
-                    <tr key={r._id} style={{ borderTop: `1px solid ${C.lineSoft}` }}>
-                      <td style={{ ...td, fontWeight: 600 }}>{r.employee ? fullName(r.employee) : '—'}</td>
-                      <td style={td}>{r.leaveType?.name || '—'}</td>
-                      <td style={{ ...td, ...NUM, color: C.muted }}>{String(r.startDate).slice(0, 10)} → {String(r.endDate).slice(0, 10)}</td>
-                      <td style={{ ...td, textAlign: 'right', ...NUM, fontWeight: 700 }}>{r.days}</td>
-                      <td style={td}>{lvPill(r.status)}</td>
-                      {tab === 'approvals' && canApprove && (
-                        <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <button onClick={() => decide(r._id, 'approve')} style={miniBtn(C.green)}>{t('leave.approve')}</button>
-                          <button onClick={() => decide(r._id, 'reject')} style={{ ...miniBtn(C.red), marginLeft: 6 }}>{t('leave.reject')}</button>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </TableWrap>
+                <DataTable
+                  rows={rows}
+                  columns={[
+                    { label: t('leave.employee'), render: (r) => <span style={{ fontWeight: 600 }}>{r.employee ? fullName(r.employee) : '—'}</span> },
+                    { label: t('leave.type'), render: (r) => r.leaveType?.name || '—' },
+                    { label: t('leave.dates'), render: (r) => <span style={{ ...NUM, color: C.muted }}>{String(r.startDate).slice(0, 10)} → {String(r.endDate).slice(0, 10)}</span> },
+                    { label: t('leave.days'), align: 'r', render: (r) => <span style={{ ...NUM, fontWeight: 700 }}>{r.days}</span> },
+                    { label: t('leave.status'), render: (r) => lvPill(r.status) },
+                    ...((tab === 'approvals' && canApprove) ? [{ label: '', align: 'r', render: (r) => (
+                      <span style={{ whiteSpace: 'nowrap' }}>
+                        <button onClick={() => decide(r._id, 'approve')} style={miniBtn(C.green)}>{t('leave.approve')}</button>
+                        <button onClick={() => decide(r._id, 'reject')} style={{ ...miniBtn(C.red), marginLeft: 6 }}>{t('leave.reject')}</button>
+                      </span>
+                    ) }] : []),
+                  ]}
+                />
               )}
             </Card>
           )}
