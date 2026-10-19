@@ -1,0 +1,50 @@
+{
+  "name": "nexusora-workforce-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nexusora Workforce desktop app (Electron shell around the hosted web app).",
+  "main": "main.js",
+  "author": "Nexusora Technologies",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env WF_APP_URL=http://localhost:5173 electron .",
+    "dist": "electron-builder --win nsis msi",
+    "dist:exe": "electron-builder --win nsis",
+    "dist:msi": "electron-builder --win msi",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "cross-env": "7.0.3",
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.nexusora.workforce",
+    "productName": "Nexusora Workforce",
+    "copyright": "Copyright © Nexusora Technologies",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**"
+    ],
+    "win": {
+      "target": ["nsis", "msi"],
+      "icon": "assets/icon.ico",
+      "artifactName": "Nexusora-Workforce-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nexusora Workforce",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico"
+    }
+  }
+}

@@ -17,3 +17,6 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+
+# Electron desktop build output
+desktop/dist/
