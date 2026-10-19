@@ -1,4 +1,4 @@
-import { Users, Building2, Briefcase, FileText, IdCard, UserPlus, ClipboardCheck, CalendarClock, CalendarDays, Wallet, ShieldCheck, TrendingUp, GraduationCap, Network, HeartHandshake, Scale, BarChart3, Gauge, Sparkles, Settings, Smile } from 'lucide-react';
+import { Users, Building2, Briefcase, FileText, IdCard, UserPlus, ClipboardCheck, CalendarClock, CalendarDays, Wallet, ShieldCheck, TrendingUp, GraduationCap, Network, HeartHandshake, Scale, BarChart3, Gauge, Sparkles, Settings, Smile, ScrollText } from 'lucide-react';
 export const MODULE_GROUPS = [
   { title: 'People', titleKey: 'home.groups.people', items: [
     { key:'employees', label:'Employees', labelKey:'home.tile.employees', to:'/employees', Icon:Users, accent:'#3485E9', live:true },
@@ -32,6 +32,7 @@ export const MODULE_GROUPS = [
     { key:'documents', label:'Documents', labelKey:'home.tile.documents', to:'/documents', Icon:FileText, accent:'#0b6fd6', live:true },
     { key:'planning', label:'Workforce Planning', labelKey:'home.tile.planning', to:'/workforce-planning', Icon:Gauge, accent:'#17a2b8', live:true, requires:{ module:'workforce' } },
     { key:'ai', label:'Workforce Intelligence', labelKey:'home.tile.ai', to:'/ai-advisor', Icon:Sparkles, accent:'#7c5cdf', live:true, requires:{ feature:'workforce_intelligence' } },
+    { key:'audit', label:'Audit Log', labelKey:'home.tile.audit', to:'/audit', Icon:ScrollText, accent:'#012158', live:true, roles:['super_admin','hr_manager'] },
     { key:'settings', label:'Settings', labelKey:'home.tile.settings', to:'/settings', Icon:Settings, accent:'#67728a', live:true },
   ]},
 ];
