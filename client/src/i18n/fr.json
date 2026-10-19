@@ -38,7 +38,8 @@
     "document": "Document",
     "role": "Rôle",
     "publish": "Publier",
-    "archive": "Archiver"
+    "archive": "Archiver",
+    "auditLog": "Journal d'audit"
   },
   "nav": {
     "home": "Accueil",

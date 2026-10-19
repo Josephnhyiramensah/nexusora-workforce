@@ -39,7 +39,8 @@
     "document": "Document",
     "role": "Role",
     "publish": "Publish",
-    "archive": "Archive"
+    "archive": "Archive",
+    "auditLog": "Audit log"
   },
   "nav": {
     "home": "Home",
