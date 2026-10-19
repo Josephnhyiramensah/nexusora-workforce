@@ -23,3 +23,11 @@ createRoot(document.getElementById('root')).render(
     </BrowserRouter>
   </StrictMode>
 );
+
+// PWA: register the service worker in production only (dev keeps clean HMR with
+// no caching). The SW makes the app installable and fast/offline-capable.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* non-fatal */ });
+  });
+}
