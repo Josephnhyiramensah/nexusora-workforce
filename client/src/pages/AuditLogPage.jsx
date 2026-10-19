@@ -160,7 +160,6 @@ export default function AuditLogPage() {
       <Hero
         crumbs={['Admin', 'Audit Log']}
         title="Audit Log"
-        subtitle="Every change made in this workspace — who did it, what changed, and when. Append-only."
         actions={<ExportButton onClick={doExport} label="Export" />}
       />
 
