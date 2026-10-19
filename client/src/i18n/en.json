@@ -104,7 +104,8 @@
       "planning": "Workforce Planning",
       "ai": "Workforce Intelligence",
       "settings": "Settings",
-      "engagement": "Engagement"
+      "engagement": "Engagement",
+      "audit": "Audit Log"
     },
     "locked": "Not included in your plan — upgrade to unlock"
   },

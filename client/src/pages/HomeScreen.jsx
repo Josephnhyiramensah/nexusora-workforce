@@ -48,10 +48,15 @@ export default function HomeScreen() {
   const companySub = (tenant?.name || tenant?.displayName) ? 'Nexusora Workforce' : 'People · Performance · Progress';
   const logoSrc = tenant?.logo || tenant?.logoUrl || '/logo-mark.png';
 
+  // Role-gate tiles that declare `roles` (e.g. Audit Log is admin-only); tiles
+  // without `roles` stay visible to everyone. super_admin sees all.
+  const roleOk = (it) => !it.roles || user?.role === 'super_admin' || it.roles.includes(user?.role);
+  const visibleGroups = MODULE_GROUPS.map((g) => ({ ...g, items: g.items.filter(roleOk) })).filter((g) => g.items.length);
+
   const q = query.trim().toLowerCase();
   const groups = q
-    ? MODULE_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => { const lbl = it.labelKey ? t(it.labelKey) : (it.label || ''); return String(lbl).toLowerCase().includes(q); }) })).filter((g) => g.items.length)
-    : MODULE_GROUPS;
+    ? visibleGroups.map((g) => ({ ...g, items: g.items.filter((it) => { const lbl = it.labelKey ? t(it.labelKey) : (it.label || ''); return String(lbl).toLowerCase().includes(q); }) })).filter((g) => g.items.length)
+    : visibleGroups;
 
   function doLogout() { setMenu(false); if (typeof logout === 'function') logout(); else navigate('/login'); }
 

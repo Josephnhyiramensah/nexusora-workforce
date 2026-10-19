@@ -103,7 +103,8 @@
       "planning": "Planification des effectifs",
       "ai": "Intelligence des effectifs",
       "settings": "Paramètres",
-      "engagement": "Engagement"
+      "engagement": "Engagement",
+      "audit": "Journal d'audit"
     },
     "locked": "Non inclus dans votre offre — mettez à niveau pour débloquer"
   },
