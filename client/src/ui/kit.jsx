@@ -156,12 +156,12 @@ export function Hero({ crumbs = [], title, subtitle, actions }) {
   return (
     <section className="nx-hero" style={{ background: 'radial-gradient(1200px 220px at 88% -40%, rgba(22,142,255,.18), transparent 60%), linear-gradient(120deg,' + C.hero1 + ' 0%,' + C.hero2 + ' 46%,' + C.hero3 + ' 100%)', padding: '24px 32px 74px', position: 'relative', overflow: 'hidden' }}>
       {crumbs.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#2b4a74', fontSize: '.76rem', fontWeight: 600 }}>{crumbs.map((c, i) => <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, opacity: i === crumbs.length - 1 ? 1 : .85 }}>{i > 0 && <ChevronRight size={13} />}{c}</span>)}</div>}
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, marginTop: 12 }}>
-        <div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 0 }}>
           <h1 style={{ margin: 0, fontSize: '1.68rem', fontWeight: 800, color: '#062a55', letterSpacing: '-.02em', textWrap: 'balance' }}>{title}</h1>
           {subtitle && <p style={{ margin: '7px 0 0', color: '#28466f', fontSize: '.9rem', maxWidth: '58ch' }}>{subtitle}</p>}
         </div>
-        {actions && <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>{actions}</div>}
+        {actions && <div style={{ display: 'flex', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>{actions}</div>}
       </div>
     </section>
   );
@@ -348,4 +348,4 @@ export function Row2({ children }) { const mobile = useIsMobile(); return <div s
 export function Lbl({ children }) { return <div style={{ fontSize: '.68rem', color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>{children}</div>; }
 export function Actions({ onClose, onSubmit, busy, label }) { return <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}><button onClick={onClose} style={ghostBtn}>Cancel</button><button onClick={onSubmit} disabled={busy} style={primaryBtn}>{busy ? 'Saving…' : label}</button></div>; }
 export function ErrBox({ children }) { return <div style={{ background: C.redBg, border: '1px solid #f6c9cb', color: C.red, padding: '9px 12px', borderRadius: 9, fontSize: '.84rem', marginBottom: 12 }}>{children}</div>; }
-export function Select({ value, onChange, children }) { return <select value={value} onChange={(e) => onChange(e.target.value)} style={{ padding: '8px 11px', border: `1px solid ${C.line}`, borderRadius: 9, background: '#fff', color: C.ink, fontSize: '.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>{children}</select>; }
+export function Select({ value, onChange, children }) { const mobile = useIsMobile(); return <select value={value} onChange={(e) => onChange(e.target.value)} style={{ padding: '8px 11px', border: `1px solid ${C.line}`, borderRadius: 9, background: '#fff', color: C.ink, fontSize: '.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: FONT, maxWidth: '100%', ...(mobile ? { flex: '1 1 8rem', minWidth: 0 } : {}) }}>{children}</select>; }
