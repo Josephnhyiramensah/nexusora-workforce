@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import {
   ModuleShell, Hero, SubHero, KpiBand, Kpi, Body, Pill, StatusPill, EmpCell, Progress, HeroBtn,
-  Card, Info, MiniStat, Empty, Banner, TableWrap, Overlay, Field, Sel, Row2, Lbl, Actions,
+  Card, Info, MiniStat, Empty, Banner, TableWrap, DataTable, Overlay, Field, Sel, Row2, Lbl, Actions,
   ErrBox, Select,
 } from '../ui/kit';
 import {
@@ -145,20 +145,20 @@ function Loans({ ov, canWrite, canApprove, setMsg, onChange }) {
           </div>
         }>
           {!items ? <Empty>Loading…</Empty> : items.length === 0 ? <Empty>No loans in this view.</Empty> : (
-            <TableWrap head={[['Ref'], ['Employee'], ['Type'], ['Principal', 'r'], ['Repayment progress'], ['Outstanding', 'r'], ['Status'], ['', 'r']]}>
-              {items.map((l) => { const pct = l.totalRepayable ? Math.round(((l.totalRepayable - l.balance) / l.totalRepayable) * 100) : 0; const repaid = (l.totalRepayable || l.principal) - (l.balance || 0); return (
-                <tr key={l._id} className="nx-row" onClick={() => setOpen(l._id)} style={rowStyle}>
-                  <td style={td}><span style={{ ...NUM, fontWeight: 700, color: C.accentInk }}>{l.loanNumber}</span></td>
-                  <td style={td}><EmpCell e={l.employee} /></td>
-                  <td style={td}><Pill tone={l.type === 'salary_advance' ? 'blue' : 'grey'}>{label(LOAN_TYPES, l.type)}</Pill></td>
-                  <td style={{ ...td, textAlign: 'right', ...NUM }}>{money(l.principal, l.currency)}</td>
-                  <td style={td}>{['active', 'completed'].includes(l.status) ? <Progress pct={pct} note={`${pct}% · ${money(repaid, l.currency)} repaid`} /> : <span style={{ fontSize: '.72rem', color: C.muted2 }}>{l.status === 'approved' ? 'Awaiting first deduction' : '—'}</span>}</td>
-                  <td style={{ ...td, textAlign: 'right', ...NUM, fontWeight: 700 }}>{money(l.balance, l.currency)}</td>
-                  <td style={td}><StatusPill map={LOAN_STATUS} k={l.status} /></td>
-                  <td style={{ ...td, textAlign: 'right' }}><ChevronRight size={16} color={C.muted2} /></td>
-                </tr>
-              ); })}
-            </TableWrap>
+            <DataTable
+              rows={items}
+              onRowClick={(l) => setOpen(l._id)}
+              columns={[
+                { label: 'Ref', render: (l) => <span style={{ ...NUM, fontWeight: 700, color: C.accentInk }}>{l.loanNumber}</span> },
+                { label: 'Employee', render: (l) => <EmpCell e={l.employee} /> },
+                { label: 'Type', render: (l) => <Pill tone={l.type === 'salary_advance' ? 'blue' : 'grey'}>{label(LOAN_TYPES, l.type)}</Pill> },
+                { label: 'Principal', align: 'r', render: (l) => <span style={NUM}>{money(l.principal, l.currency)}</span> },
+                { label: 'Repayment progress', render: (l) => { const pct = l.totalRepayable ? Math.round(((l.totalRepayable - l.balance) / l.totalRepayable) * 100) : 0; const repaid = (l.totalRepayable || l.principal) - (l.balance || 0); return ['active', 'completed'].includes(l.status) ? <Progress pct={pct} note={`${pct}% · ${money(repaid, l.currency)} repaid`} /> : <span style={{ fontSize: '.72rem', color: C.muted2 }}>{l.status === 'approved' ? 'Awaiting first deduction' : '—'}</span>; } },
+                { label: 'Outstanding', align: 'r', render: (l) => <span style={{ ...NUM, fontWeight: 700 }}>{money(l.balance, l.currency)}</span> },
+                { label: 'Status', render: (l) => <StatusPill map={LOAN_STATUS} k={l.status} /> },
+                { label: '', align: 'r', mobileHide: true, render: () => <ChevronRight size={16} color={C.muted2} /> },
+              ]}
+            />
           )}
         </Card>
       </Body>
@@ -286,19 +286,19 @@ function Claims({ ov, canWrite, canApprove, setMsg, onChange }) {
           </div>
         }>
           {!items ? <Empty>Loading…</Empty> : items.length === 0 ? <Empty>No claims in this view.</Empty> : (
-            <TableWrap head={[['Ref'], ['Employee'], ['Category'], ['Requested', 'r'], ['Approved', 'r'], ['Status'], ['', 'r']]}>
-              {items.map((cl) => (
-                <tr key={cl._id} className="nx-row" onClick={() => setOpen(cl._id)} style={rowStyle}>
-                  <td style={td}><span style={{ ...NUM, fontWeight: 700, color: C.accentInk }}>{cl.claimNumber}</span></td>
-                  <td style={td}><EmpCell e={cl.employee} /></td>
-                  <td style={td}><Pill tone="grey">{label(CLAIM_CATS, cl.category)}</Pill></td>
-                  <td style={{ ...td, textAlign: 'right', ...NUM }}>{money(cl.amountRequested, cl.currency)}</td>
-                  <td style={{ ...td, textAlign: 'right', ...NUM, fontWeight: 700 }}>{cl.amountApproved ? money(cl.amountApproved, cl.currency) : '—'}</td>
-                  <td style={td}><StatusPill map={CLAIM_STATUS} k={cl.status} /></td>
-                  <td style={{ ...td, textAlign: 'right' }}><ChevronRight size={16} color={C.muted2} /></td>
-                </tr>
-              ))}
-            </TableWrap>
+            <DataTable
+              rows={items}
+              onRowClick={(cl) => setOpen(cl._id)}
+              columns={[
+                { label: 'Ref', render: (cl) => <span style={{ ...NUM, fontWeight: 700, color: C.accentInk }}>{cl.claimNumber}</span> },
+                { label: 'Employee', render: (cl) => <EmpCell e={cl.employee} /> },
+                { label: 'Category', render: (cl) => <Pill tone="grey">{label(CLAIM_CATS, cl.category)}</Pill> },
+                { label: 'Requested', align: 'r', render: (cl) => <span style={NUM}>{money(cl.amountRequested, cl.currency)}</span> },
+                { label: 'Approved', align: 'r', render: (cl) => <span style={{ ...NUM, fontWeight: 700 }}>{cl.amountApproved ? money(cl.amountApproved, cl.currency) : '—'}</span> },
+                { label: 'Status', render: (cl) => <StatusPill map={CLAIM_STATUS} k={cl.status} /> },
+                { label: '', align: 'r', mobileHide: true, render: () => <ChevronRight size={16} color={C.muted2} /> },
+              ]}
+            />
           )}
         </Card>
       </Body>

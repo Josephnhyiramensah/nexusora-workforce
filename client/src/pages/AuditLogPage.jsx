@@ -11,7 +11,7 @@ import { exportTable, ExportButton } from '../utils/exporter';
 import AuditDetailTray from '../components/AuditDetailTray';
 import { describe, verbTone, resourceLabel, VERB_OF } from '../utils/audit';
 import { ScrollText, Search, Filter, X, ChevronLeft, ChevronRight, ShieldAlert, RotateCcw } from 'lucide-react';
-import { Hero, KpiBand, Kpi, Body, Card, Empty, TableWrap } from '../ui/kit';
+import { Hero, KpiBand, Kpi, Body, Card, Empty, DataTable } from '../ui/kit';
 import { C, NUM, FONT, cap, initials, gradOf, inp, ghostBtn, td, rowStyle } from '../ui/tokens';
 
 const PAGE_SIZE = 50;
@@ -203,35 +203,37 @@ export default function AuditLogPage() {
                 <Empty>{activeFilters ? 'No events match these filters.' : 'No activity recorded yet. Changes made in this workspace will appear here.'}</Empty>
               ) : (
                 <>
-                  <TableWrap head={[['When'], ['Actor'], ['Action'], ['Details'], ['']]}>
-                    {items.map((e) => {
-                      const who = (e.actor && (e.actor.name || e.actor.email)) || (e.actor?.type === 'system' ? 'System' : 'Unknown');
-                      const [, vtone] = verbTone(VERB_OF(e.action, e.method));
-                      const imp = e.meta && e.meta.impersonated;
-                      return (
-                        <tr key={e._id} className="nx-row" style={{ ...rowStyle }} onClick={() => openTray(e)}>
-                          <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                            <div style={{ fontWeight: 600, color: C.ink }}>{relTime(e.at)}</div>
-                            <div style={{ fontSize: '.72rem', color: C.muted2, ...NUM }}>{fmtTime(e.at)}</div>
-                          </td>
-                          <td style={td}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <span style={{ width: 30, height: 30, borderRadius: '50%', flex: 'none', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700, fontSize: '.68rem', background: gradOf(who) }}>{initials(who)}</span>
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ fontWeight: 600, color: C.ink, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>{who}{imp ? <ShieldAlert size={13} style={{ color: C.amber }} /> : null}</div>
-                                <div style={{ fontSize: '.72rem', color: C.muted2 }}>{cap(e.actor?.role) || cap(e.actor?.type) || '—'}</div>
-                              </div>
+                  <DataTable
+                    rows={items}
+                    onRowClick={openTray}
+                    columns={[
+                      { label: 'When', render: (e) => (
+                        <div>
+                          <div style={{ fontWeight: 600, color: C.ink }}>{relTime(e.at)}</div>
+                          <div style={{ fontSize: '.72rem', color: C.muted2, ...NUM }}>{fmtTime(e.at)}</div>
+                        </div>
+                      ) },
+                      { label: 'Actor', render: (e) => {
+                        const who = (e.actor && (e.actor.name || e.actor.email)) || (e.actor?.type === 'system' ? 'System' : 'Unknown');
+                        const imp = e.meta && e.meta.impersonated;
+                        return (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ width: 30, height: 30, borderRadius: '50%', flex: 'none', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700, fontSize: '.68rem', background: gradOf(who) }}>{initials(who)}</span>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 600, color: C.ink, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>{who}{imp ? <ShieldAlert size={13} style={{ color: C.amber }} /> : null}</div>
+                              <div style={{ fontSize: '.72rem', color: C.muted2 }}>{cap(e.actor?.role) || cap(e.actor?.type) || '—'}</div>
                             </div>
-                          </td>
-                          <td style={td}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: 999, color: vtone[0], background: vtone[1], whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />{describe(e.action, e.method)}</span>
-                          </td>
-                          <td style={{ ...td, color: C.muted, ...NUM, fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize: '.78rem', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.method} {e.path}</td>
-                          <td style={{ ...td, textAlign: 'right', color: C.muted2 }}><ChevronRight size={16} /></td>
-                        </tr>
-                      );
-                    })}
-                  </TableWrap>
+                          </div>
+                        );
+                      } },
+                      { label: 'Action', render: (e) => {
+                        const [, vtone] = verbTone(VERB_OF(e.action, e.method));
+                        return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: 999, color: vtone[0], background: vtone[1], whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />{describe(e.action, e.method)}</span>;
+                      } },
+                      { label: 'Details', render: (e) => <span style={{ color: C.muted, ...NUM, fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize: '.78rem', wordBreak: 'break-all' }}>{e.method} {e.path}</span> },
+                      { label: '', align: 'r', mobileHide: true, render: () => <ChevronRight size={16} style={{ color: C.muted2 }} /> },
+                    ]}
+                  />
 
                   {/* ---- Pagination ---- */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 16, flexWrap: 'wrap' }}>

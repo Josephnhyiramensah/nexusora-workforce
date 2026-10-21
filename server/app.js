@@ -29,6 +29,15 @@ app.use(compression({
 const corsOrigin = (origin, cb) => {
   if (!origin) return cb(null, true);
   if (origin === env.CLIENT_URL) return cb(null, true);
+  // Dev only: allow localhost and private-LAN origins so a real phone on the
+  // same Wi-Fi can reach the dev server (e.g. http://192.168.0.102:5173).
+  // Production is unaffected — the strict rules below still apply there.
+  if (env.NODE_ENV !== 'production') {
+    try {
+      const h = new URL(origin).hostname;
+      if (h === 'localhost' || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h)) return cb(null, true);
+    } catch { /* malformed → fall through */ }
+  }
   const base = env.APP_BASE_DOMAIN;
   if (base) {
     try {

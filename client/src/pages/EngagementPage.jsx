@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import {
-  ModuleShell, Hero, KpiBand, Kpi, Body, Card, TableWrap, StatusPill, Pill,
+  ModuleShell, Hero, KpiBand, Kpi, Body, Card, DataTable, StatusPill, Pill,
   HeroBtn, Overlay, Field, Sel, Empty, ErrBox, Banner, Lbl,
 } from '../ui/kit';
 import { C, NUM, cap, rowStyle, td, primaryBtn, ghostBtn } from '../ui/tokens';
@@ -226,29 +226,28 @@ function Surveys() {
           {!surveys ? <Empty>Loading…</Empty>
             : surveys.length === 0 ? <Empty>No surveys yet. Create your first one with “New survey”.</Empty>
               : (
-                <TableWrap head={[['Survey'], ['Type'], ['Audience'], ['Participation'], ['Status'], ['', 'r']]}>
-                  {surveys.map((s) => (
-                    <tr key={s._id} style={rowStyle}>
-                      <td style={td}><div style={{ fontWeight: 700, color: C.navy }}>{s.title}</div><div style={{ fontSize: '.74rem', color: C.muted2 }}>{s.questions} question(s){s.anonymous ? ' · anonymous' : ''}{s.closesAt ? ` · closes ${fmtDate(s.closesAt)}` : (s.status === 'scheduled' && s.opensAt ? ` · opens ${fmtDate(s.opensAt)}` : '')}</div></td>
-                      <td style={td}><Pill tone={s.type === 'enps' ? 'blue' : 'grey'}>{TYPE_LABEL[s.type] || cap(s.type)}</Pill></td>
-                      <td style={td}>{s.audience?.scope === 'department' ? (s.audience.department || 'Department') : 'Everyone'}</td>
-                      <td style={td}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div style={{ width: 90 }}><RateBar pct={s.responseRate} /></div>
-                          <span style={{ ...NUM, fontSize: '.78rem', color: C.muted2, whiteSpace: 'nowrap' }}>{s.responseCount}{s.eligible ? ` / ${s.eligible}` : ''}{s.responseRate != null ? ` · ${s.responseRate}%` : ''}</span>
-                        </div>
-                      </td>
-                      <td style={td}><StatusPill map={STATUS_MAP} k={s.status} /></td>
-                      <td style={{ ...td, textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: 6 }}>
-                          {(s.status === 'draft' || s.status === 'scheduled') && <button onClick={() => setStatus(s._id, 'open')} style={miniBtn('#1f9d57')}><Play size={13} /> Open now</button>}
-                          {s.status === 'open' && <button onClick={() => setStatus(s._id, 'closed')} style={miniBtn('#c77700')}><Square size={13} /> Close</button>}
-                          <button onClick={() => del(s._id)} title="Delete" style={miniBtn(C.red, true)}><Trash2 size={13} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </TableWrap>
+                <DataTable
+                  rows={surveys}
+                  columns={[
+                    { label: 'Survey', render: (s) => <div><div style={{ fontWeight: 700, color: C.navy }}>{s.title}</div><div style={{ fontSize: '.74rem', color: C.muted2 }}>{s.questions} question(s){s.anonymous ? ' · anonymous' : ''}{s.closesAt ? ` · closes ${fmtDate(s.closesAt)}` : (s.status === 'scheduled' && s.opensAt ? ` · opens ${fmtDate(s.opensAt)}` : '')}</div></div> },
+                    { label: 'Type', render: (s) => <Pill tone={s.type === 'enps' ? 'blue' : 'grey'}>{TYPE_LABEL[s.type] || cap(s.type)}</Pill> },
+                    { label: 'Audience', render: (s) => s.audience?.scope === 'department' ? (s.audience.department || 'Department') : 'Everyone' },
+                    { label: 'Participation', render: (s) => (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' }}>
+                        <div style={{ width: 90 }}><RateBar pct={s.responseRate} /></div>
+                        <span style={{ ...NUM, fontSize: '.78rem', color: C.muted2, whiteSpace: 'nowrap' }}>{s.responseCount}{s.eligible ? ` / ${s.eligible}` : ''}{s.responseRate != null ? ` · ${s.responseRate}%` : ''}</span>
+                      </div>
+                    ) },
+                    { label: 'Status', render: (s) => <StatusPill map={STATUS_MAP} k={s.status} /> },
+                    { label: '', align: 'r', render: (s) => (
+                      <div style={{ display: 'inline-flex', gap: 6 }}>
+                        {(s.status === 'draft' || s.status === 'scheduled') && <button onClick={() => setStatus(s._id, 'open')} style={miniBtn('#1f9d57')}><Play size={13} /> Open now</button>}
+                        {s.status === 'open' && <button onClick={() => setStatus(s._id, 'closed')} style={miniBtn('#c77700')}><Square size={13} /> Close</button>}
+                        <button onClick={() => del(s._id)} title="Delete" style={miniBtn(C.red, true)}><Trash2 size={13} /></button>
+                      </div>
+                    ) },
+                  ]}
+                />
               )}
         </Card>
       </Body>
@@ -456,25 +455,21 @@ function Actions() {
           {!actions ? <Empty>Loading…</Empty>
             : actions.length === 0 ? <Empty>No actions yet. Turn survey findings into owned follow-ups with “New action”.</Empty>
               : (
-                <TableWrap head={[['Action'], ['Owner'], ['Due'], ['Priority'], ['Status'], ['', 'r']]}>
-                  {actions.map((a) => {
-                    const over = a.status !== 'done' && a.dueDate && new Date(a.dueDate) < new Date();
-                    return (
-                      <tr key={a._id} style={rowStyle}>
-                        <td style={td}><div style={{ fontWeight: 700, color: C.navy }}>{a.title}</div>{a.surveyTitle && <div style={{ fontSize: '.72rem', color: C.muted2 }}>from “{a.surveyTitle}”</div>}</td>
-                        <td style={td}>{a.owner || <span style={{ color: C.muted2 }}>—</span>}</td>
-                        <td style={td}><span style={{ color: over ? C.red : C.ink, fontWeight: over ? 700 : 400 }}>{a.dueDate ? fmtDate(a.dueDate) : '—'}</span></td>
-                        <td style={td}><StatusPill map={PRIO} k={a.priority} /></td>
-                        <td style={td}>
-                          <select value={a.status} onChange={(e) => setStatus(a._id, e.target.value)} style={{ ...qSel, fontWeight: 600 }}>
-                            <option value="open">Open</option><option value="in_progress">In progress</option><option value="done">Done</option>
-                          </select>
-                        </td>
-                        <td style={{ ...td, textAlign: 'right' }}><button onClick={() => del(a._id)} title="Delete" style={miniBtn(C.red, true)}><Trash2 size={13} /></button></td>
-                      </tr>
-                    );
-                  })}
-                </TableWrap>
+                <DataTable
+                  rows={actions}
+                  columns={[
+                    { label: 'Action', render: (a) => <div><div style={{ fontWeight: 700, color: C.navy }}>{a.title}</div>{a.surveyTitle && <div style={{ fontSize: '.72rem', color: C.muted2 }}>from “{a.surveyTitle}”</div>}</div> },
+                    { label: 'Owner', render: (a) => a.owner || <span style={{ color: C.muted2 }}>—</span> },
+                    { label: 'Due', render: (a) => { const over = a.status !== 'done' && a.dueDate && new Date(a.dueDate) < new Date(); return <span style={{ color: over ? C.red : C.ink, fontWeight: over ? 700 : 400 }}>{a.dueDate ? fmtDate(a.dueDate) : '—'}</span>; } },
+                    { label: 'Priority', render: (a) => <StatusPill map={PRIO} k={a.priority} /> },
+                    { label: 'Status', render: (a) => (
+                      <select value={a.status} onChange={(e) => setStatus(a._id, e.target.value)} style={{ ...qSel, fontWeight: 600 }}>
+                        <option value="open">Open</option><option value="in_progress">In progress</option><option value="done">Done</option>
+                      </select>
+                    ) },
+                    { label: '', align: 'r', render: (a) => <button onClick={() => del(a._id)} title="Delete" style={miniBtn(C.red, true)}><Trash2 size={13} /></button> },
+                  ]}
+                />
               )}
         </Card>
       </Body>

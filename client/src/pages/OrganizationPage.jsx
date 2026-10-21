@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Users, Building2, Briefcase, FileText, IdCard, Plus, MapPin, Landmark, GitBranch } from 'lucide-react';
 import {
   RouteShell, Hero, KpiBand, Kpi, Body, Card, Empty, Segmented, Pill,
-  Overlay, Field, Row2, Lbl, Actions, ErrBox, HeroBtn, TableWrap,
+  Overlay, Field, Row2, Lbl, Actions, ErrBox, HeroBtn, DataTable,
 } from '../ui/kit';
 import { C, rowStyle, td, inp, miniBtn } from '../ui/tokens';
 
@@ -98,22 +98,22 @@ export default function OrganizationPage() {
         <div style={{ marginBottom: 4 }}><Segmented items={UNIT_TYPES.map((u) => [u.key, u.label])} active={activeType} onSelect={setActiveType} /></div>
         <Card title={typeMeta.label} sub={`${items.length} in view`}>
           {loading ? <Empty>Loading…</Empty> : items.length === 0 ? <Empty>No {typeMeta.label.toLowerCase()} yet.</Empty> : (
-            <TableWrap head={[['Name'], ['Code'], ['Parent'], ['Status'], canWrite ? ['', 'r'] : ['']]}>
-              {items.map((u) => (
-                <tr key={u._id} className="nx-row" onClick={() => openEdit(u)} style={canWrite ? rowStyle : { borderTop: `1px solid ${C.lineSoft}` }}>
-                  <td style={{ ...td, fontWeight: 700, color: C.navy }}>{u.name}</td>
-                  <td style={td}>{u.code || '—'}</td>
-                  <td style={td}>{u.parent?.name || '—'}</td>
-                  <td style={td}><Pill tone={u.active !== false ? 'green' : 'amber'}>{u.active !== false ? 'Active' : 'Inactive'}</Pill></td>
-                  {canWrite && (
-                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => openEdit(u)} style={miniBtn(C.accent)}>Edit</button>
-                      {u.active !== false && <button onClick={(e) => deactivate(e, u)} style={{ ...miniBtn(C.red), marginLeft: 6 }}>Deactivate</button>}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </TableWrap>
+            <DataTable
+              rows={items}
+              onRowClick={openEdit}
+              columns={[
+                { label: 'Name', render: (u) => <span style={{ fontWeight: 700, color: C.navy }}>{u.name}</span> },
+                { label: 'Code', render: (u) => u.code || '—' },
+                { label: 'Parent', render: (u) => u.parent?.name || '—' },
+                { label: 'Status', render: (u) => <Pill tone={u.active !== false ? 'green' : 'amber'}>{u.active !== false ? 'Active' : 'Inactive'}</Pill> },
+                ...(canWrite ? [{ label: '', align: 'r', render: (u) => (
+                  <span style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => openEdit(u)} style={miniBtn(C.accent)}>Edit</button>
+                    {u.active !== false && <button onClick={(e) => deactivate(e, u)} style={{ ...miniBtn(C.red), marginLeft: 6 }}>Deactivate</button>}
+                  </span>
+                ) }] : []),
+              ]}
+            />
           )}
         </Card>
       </Body>

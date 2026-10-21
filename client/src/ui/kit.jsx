@@ -8,8 +8,9 @@ import { Link, useLocation } from 'react-router-dom';
 import { ChevronRight, ChevronLeft, CheckCircle2, Menu } from 'lucide-react';
 import {
   C, NUM, FONT, PILL, initials, fullName, cap, gradOf,
-  inp, primaryBtn, ghostBtn, thBase,
+  inp, primaryBtn, ghostBtn, thBase, td, rowStyle,
 } from './tokens';
+import { useIsMobile } from './hooks';
 
 /* --------------------------- GLOBAL CSS --------------------------- */
 export function GlobalStyles() {
@@ -40,6 +41,14 @@ export function GlobalStyles() {
         .nx-topsearch{display:none!important}
       }
       @media (max-width:460px){ .nx-brand-text{display:none!important} }
+      /* ---- mobile gutters: trim the 32px desktop side padding on phones ---- */
+      @media (max-width:620px){
+        .nx-hero, .nx-subhero{ padding-left:16px!important; padding-right:16px!important; }
+        .nx-hero{ padding-bottom:60px!important; }
+        .nx-kpiband{ padding-left:16px!important; padding-right:16px!important; }
+        .nx-body{ padding-left:16px!important; padding-right:16px!important; }
+        .nx-hero h1{ font-size:1.4rem!important; }
+      }
     `}</style>
   );
 }
@@ -145,21 +154,21 @@ export function RouteShell({ brand, groups, children }) {
 /* ------------------------- HERO + KPI BAND ------------------------ */
 export function Hero({ crumbs = [], title, subtitle, actions }) {
   return (
-    <section style={{ background: 'radial-gradient(1200px 220px at 88% -40%, rgba(22,142,255,.18), transparent 60%), linear-gradient(120deg,' + C.hero1 + ' 0%,' + C.hero2 + ' 46%,' + C.hero3 + ' 100%)', padding: '24px 32px 74px', position: 'relative', overflow: 'hidden' }}>
+    <section className="nx-hero" style={{ background: 'radial-gradient(1200px 220px at 88% -40%, rgba(22,142,255,.18), transparent 60%), linear-gradient(120deg,' + C.hero1 + ' 0%,' + C.hero2 + ' 46%,' + C.hero3 + ' 100%)', padding: '24px 32px 74px', position: 'relative', overflow: 'hidden' }}>
       {crumbs.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#2b4a74', fontSize: '.76rem', fontWeight: 600 }}>{crumbs.map((c, i) => <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, opacity: i === crumbs.length - 1 ? 1 : .85 }}>{i > 0 && <ChevronRight size={13} />}{c}</span>)}</div>}
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, marginTop: 12 }}>
-        <div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 0 }}>
           <h1 style={{ margin: 0, fontSize: '1.68rem', fontWeight: 800, color: '#062a55', letterSpacing: '-.02em', textWrap: 'balance' }}>{title}</h1>
           {subtitle && <p style={{ margin: '7px 0 0', color: '#28466f', fontSize: '.9rem', maxWidth: '58ch' }}>{subtitle}</p>}
         </div>
-        {actions && <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>{actions}</div>}
+        {actions && <div style={{ display: 'flex', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>{actions}</div>}
       </div>
     </section>
   );
 }
 export function SubHero({ onBack, backLabel, crumbs = [], title, statusEl, meta }) {
   return (
-    <section style={{ background: 'linear-gradient(120deg,' + C.hero1 + ' 0%,' + C.hero2 + ' 55%,' + C.hero3 + ' 100%)', padding: '20px 32px 66px', position: 'relative' }}>
+    <section className="nx-subhero" style={{ background: 'linear-gradient(120deg,' + C.hero1 + ' 0%,' + C.hero2 + ' 55%,' + C.hero3 + ' 100%)', padding: '20px 32px 66px', position: 'relative' }}>
       {onBack && <button onClick={onBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,.8)', border: '1px solid rgba(255,255,255,.9)', borderRadius: 9, padding: '7px 13px', fontWeight: 700, fontSize: '.8rem', color: C.navy, cursor: 'pointer', marginBottom: 12 }}><ChevronLeft size={15} /> {backLabel}</button>}
       {crumbs.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#2b4a74', fontSize: '.76rem', fontWeight: 600, marginBottom: 8 }}>{crumbs.map((c, i) => <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>{i > 0 && <ChevronRight size={13} />}{c}</span>)}</div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -171,7 +180,7 @@ export function SubHero({ onBack, backLabel, crumbs = [], title, statusEl, meta 
   );
 }
 export function KpiBand({ children }) {
-  return <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16, padding: '0 32px', marginTop: -50, position: 'relative', zIndex: 5 }}>{children}</section>;
+  return <section className="nx-kpiband" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16, padding: '0 32px', marginTop: -50, position: 'relative', zIndex: 5 }}>{children}</section>;
 }
 export function Kpi({ Icon, iconColor = C.accentInk, iconBg = '#e6f1fd', pill, label, value, unit, foot, onClick }) {
   const inner = (
@@ -190,7 +199,8 @@ export function Kpi({ Icon, iconColor = C.accentInk, iconBg = '#e6f1fd', pill, l
   return <div style={base}>{inner}</div>;
 }
 export function Body({ children, cols }) {
-  return <section style={{ padding: '26px 32px 0', display: 'grid', gridTemplateColumns: cols || '1fr', gap: 22, alignItems: 'start' }}>{children}</section>;
+  const mobile = useIsMobile();
+  return <section className="nx-body" style={{ padding: '26px 32px 0', display: 'grid', gridTemplateColumns: mobile ? '1fr' : (cols || '1fr'), gap: mobile ? 14 : 22, alignItems: 'start' }}>{children}</section>;
 }
 /* Segmented control — in-page tabs. items: [[key,label], …] */
 export function Segmented({ items, active, onSelect }) {
@@ -228,12 +238,13 @@ export function HeroBtn({ children, Icon, ghost, onClick, type = 'button' }) {
   return <button type={type} onClick={onClick} style={style}>{Icon && <Icon size={16} />}{children}</button>;
 }
 export function Card({ title, sub, right, children, pad }) {
+  const mobile = useIsMobile();
   return (
     <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, boxShadow: '0 1px 2px rgba(1,33,88,.05)' }}>
-      {(title || right) && <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '15px 20px', borderBottom: `1px solid ${C.lineSoft}` }}>
+      {(title || right) && <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '15px 20px', borderBottom: `1px solid ${C.lineSoft}`, flexWrap: 'wrap' }}>
         {title && <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: C.navy }}>{title}</h2>}
         {sub && <span style={{ fontSize: '.78rem', color: C.muted2 }}>· {sub}</span>}
-        {right && <div style={{ marginLeft: 'auto' }}>{right}</div>}
+        {right && <div style={{ marginLeft: mobile ? 0 : 'auto', width: mobile ? '100%' : 'auto' }}>{right}</div>}
       </div>}
       <div style={{ padding: pad != null ? pad : (title || right ? '14px 20px 18px' : 18) }}>{children}</div>
     </div>
@@ -264,19 +275,77 @@ export function MiniTable({ head, children }) {
   </table>;
 }
 
+/* Responsive data table — a real table on desktop, stacked label/value cards on
+   phones (so wide tables stop needing a horizontal scroll). Adopt it by passing
+   column defs + row data instead of hand-building <tr>s.
+     columns: [{ key, label, align?: 'r', render?: (row) => node, mobileHide?: bool }]
+     rows:    array of row objects
+     onRowClick?: (row) => void   empty?: node shown when there are no rows */
+export function DataTable({ columns, rows, onRowClick, empty = 'Nothing to show.', keyField = '_id' }) {
+  const mobile = useIsMobile();
+  if (!rows || rows.length === 0) return <Empty>{empty}</Empty>;
+
+  if (mobile) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rows.map((r, i) => {
+          const cols = columns.filter((c) => !c.mobileHide);
+          return (
+            <div key={r[keyField] ?? i} onClick={onRowClick ? () => onRowClick(r) : undefined}
+              style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 14px', boxShadow: '0 1px 2px rgba(1,33,88,.05)', cursor: onRowClick ? 'pointer' : 'default' }}>
+              {cols.map((c, ci) => {
+                const val = c.render ? c.render(r) : r[c.key];
+                return (
+                  <div key={ci} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 14, padding: '6px 0', borderTop: ci === 0 ? 'none' : `1px solid ${C.lineSoft}` }}>
+                    <span style={{ fontSize: '.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: C.muted2, flex: 'none', paddingTop: 2 }}>{c.label || ''}</span>
+                    <span style={{ fontSize: '.86rem', color: C.ink, textAlign: 'right', minWidth: 0, overflowWrap: 'anywhere' }}>{(val === undefined || val === null || val === '') ? '—' : val}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <TableWrap head={columns.map((c) => [c.label, c.align])}>
+      {rows.map((r, i) => (
+        <tr key={r[keyField] ?? i} className={onRowClick ? 'nx-row' : undefined}
+          style={onRowClick ? rowStyle : { borderTop: `1px solid ${C.lineSoft}` }}
+          onClick={onRowClick ? () => onRowClick(r) : undefined}>
+          {columns.map((c, ci) => (
+            <td key={ci} style={{ ...td, textAlign: c.align === 'r' ? 'right' : 'left' }}>{c.render ? c.render(r) : (r[c.key] ?? '—')}</td>
+          ))}
+        </tr>
+      ))}
+    </TableWrap>
+  );
+}
+
 /* ------------------------------ FORMS ----------------------------- */
 export function Overlay({ children, onClose, title, width = 520 }) {
-  return <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(1,33,88,.5)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'start center', padding: '40px 20px', zIndex: 60, overflowY: 'auto' }}>
-    <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: width, background: '#fff', borderRadius: 16, boxShadow: '0 18px 44px rgba(1,33,88,.3)', overflow: 'hidden' }}>
-      <div style={{ background: 'linear-gradient(120deg,' + C.hero1 + ',' + C.hero3 + ')', padding: '16px 24px' }}><h2 style={{ margin: 0, color: C.navy, fontSize: '1.12rem', fontWeight: 800 }}>{title}</h2></div>
-      <div style={{ padding: 24 }}>{children}</div>
+  const mobile = useIsMobile();
+  // Phone: full-width bottom sheet (rounded top, slides from the bottom edge,
+  // scrolls inside). Desktop: a centred card near the top.
+  const outer = mobile
+    ? { position: 'fixed', inset: 0, background: 'rgba(1,33,88,.5)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'end stretch', zIndex: 60 }
+    : { position: 'fixed', inset: 0, background: 'rgba(1,33,88,.5)', backdropFilter: 'blur(3px)', display: 'grid', placeItems: 'start center', padding: '40px 20px', zIndex: 60, overflowY: 'auto' };
+  const panel = mobile
+    ? { width: '100%', maxHeight: '92vh', background: '#fff', borderRadius: '18px 18px 0 0', boxShadow: '0 -8px 40px rgba(1,33,88,.3)', overflowY: 'auto' }
+    : { width: '100%', maxWidth: width, background: '#fff', borderRadius: 16, boxShadow: '0 18px 44px rgba(1,33,88,.3)', overflow: 'hidden' };
+  return <div onClick={onClose} style={outer}>
+    <div onClick={(e) => e.stopPropagation()} style={panel}>
+      <div style={{ background: 'linear-gradient(120deg,' + C.hero1 + ',' + C.hero3 + ')', padding: '16px 24px', position: mobile ? 'sticky' : 'static', top: 0 }}><h2 style={{ margin: 0, color: C.navy, fontSize: '1.12rem', fontWeight: 800 }}>{title}</h2></div>
+      <div style={{ padding: mobile ? '20px 18px calc(20px + env(safe-area-inset-bottom,0px))' : 24 }}>{children}</div>
     </div>
   </div>;
 }
 export function Field({ label, value, onChange, type = 'text', placeholder }) { return <label style={{ display: 'block', marginBottom: 12 }}><Lbl>{label}</Lbl><input type={type} value={value ?? ''} placeholder={placeholder || ''} onChange={(e) => onChange(e.target.value)} style={inp} /></label>; }
 export function Sel({ label, value, onChange, options }) { return <label style={{ display: 'block', marginBottom: 12 }}><Lbl>{label}</Lbl><select value={value} onChange={(e) => onChange(e.target.value)} style={inp}>{options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>; }
-export function Row2({ children }) { return <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>{children}</div>; }
+export function Row2({ children }) { const mobile = useIsMobile(); return <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr', gap: 10 }}>{children}</div>; }
 export function Lbl({ children }) { return <div style={{ fontSize: '.68rem', color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>{children}</div>; }
 export function Actions({ onClose, onSubmit, busy, label }) { return <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}><button onClick={onClose} style={ghostBtn}>Cancel</button><button onClick={onSubmit} disabled={busy} style={primaryBtn}>{busy ? 'Saving…' : label}</button></div>; }
 export function ErrBox({ children }) { return <div style={{ background: C.redBg, border: '1px solid #f6c9cb', color: C.red, padding: '9px 12px', borderRadius: 9, fontSize: '.84rem', marginBottom: 12 }}>{children}</div>; }
-export function Select({ value, onChange, children }) { return <select value={value} onChange={(e) => onChange(e.target.value)} style={{ padding: '8px 11px', border: `1px solid ${C.line}`, borderRadius: 9, background: '#fff', color: C.ink, fontSize: '.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>{children}</select>; }
+export function Select({ value, onChange, children }) { const mobile = useIsMobile(); return <select value={value} onChange={(e) => onChange(e.target.value)} style={{ padding: '8px 11px', border: `1px solid ${C.line}`, borderRadius: 9, background: '#fff', color: C.ink, fontSize: '.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: FONT, maxWidth: '100%', ...(mobile ? { flex: '1 1 8rem', minWidth: 0 } : {}) }}>{children}</select>; }

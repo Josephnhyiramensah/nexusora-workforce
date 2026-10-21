@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Users, Building2, Briefcase, FileText, IdCard, Plus, UserCheck, UserX, Layers } from 'lucide-react';
 import {
   RouteShell, Hero, KpiBand, Kpi, Body, Card, Empty, Pill,
-  Overlay, Field, Lbl, Actions, ErrBox, HeroBtn, TableWrap,
+  Overlay, Field, Lbl, Actions, ErrBox, HeroBtn, DataTable,
 } from '../ui/kit';
 import { C, NUM, rowStyle, td, inp, miniBtn } from '../ui/tokens';
 
@@ -99,27 +99,27 @@ export default function PositionsPage() {
         {error && <ErrBox>{error}</ErrBox>}
         <Card title="Positions" sub={loading ? '' : `${shown.length} shown · ${FILTER_LABEL[posFilter]}`} right={posFilter !== 'all' ? <button onClick={() => setPosFilter('all')} style={{ border: `1px solid ${C.line}`, background: '#fff', color: C.accentInk, fontWeight: 700, fontSize: '.78rem', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit' }}>Clear filter ✕</button> : null}>
           {loading ? <Empty>Loading…</Empty> : shown.length === 0 ? <Empty>No positions match this filter.</Empty> : (
-            <TableWrap head={[['Title'], ['Code'], ['Department'], ['Grade'], ['Reports to'], ['Head', 'r'], ['Filled', 'r'], ['Vacant', 'r'], ['Status'], canWrite ? ['', 'r'] : ['']]}>
-              {shown.map((p) => (
-                <tr key={p._id} className="nx-row" onClick={() => openEdit(p)} style={canWrite ? rowStyle : { borderTop: `1px solid ${C.lineSoft}` }}>
-                  <td style={{ ...td, fontWeight: 700, color: C.navy }}>{p.title}</td>
-                  <td style={td}>{p.code || '—'}</td>
-                  <td style={td}>{p.department?.name || '—'}</td>
-                  <td style={td}>{p.grade || '—'}</td>
-                  <td style={td}>{p.reportsTo?.title || '—'}</td>
-                  <td style={{ ...td, textAlign: 'right', ...NUM }}>{p.headcount ?? 1}</td>
-                  <td style={{ ...td, textAlign: 'right', ...NUM }}>{p.filled ?? 0}</td>
-                  <td style={{ ...td, textAlign: 'right' }}><Pill tone={p.vacant > 0 ? 'amber' : 'green'}>{p.vacant ?? 0}</Pill></td>
-                  <td style={td}><Pill tone={p.active !== false ? 'green' : 'amber'}>{p.active !== false ? 'Active' : 'Inactive'}</Pill></td>
-                  {canWrite && (
-                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => openEdit(p)} style={miniBtn(C.accent)}>Edit</button>
-                      {p.active !== false && <button onClick={(e) => deactivate(e, p)} style={{ ...miniBtn(C.red), marginLeft: 6 }}>Deactivate</button>}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </TableWrap>
+            <DataTable
+              rows={shown}
+              onRowClick={openEdit}
+              columns={[
+                { label: 'Title', render: (p) => <span style={{ fontWeight: 700, color: C.navy }}>{p.title}</span> },
+                { label: 'Code', render: (p) => p.code || '—' },
+                { label: 'Department', render: (p) => p.department?.name || '—' },
+                { label: 'Grade', render: (p) => p.grade || '—' },
+                { label: 'Reports to', render: (p) => p.reportsTo?.title || '—' },
+                { label: 'Head', align: 'r', render: (p) => <span style={NUM}>{p.headcount ?? 1}</span> },
+                { label: 'Filled', align: 'r', render: (p) => <span style={NUM}>{p.filled ?? 0}</span> },
+                { label: 'Vacant', align: 'r', render: (p) => <Pill tone={p.vacant > 0 ? 'amber' : 'green'}>{p.vacant ?? 0}</Pill> },
+                { label: 'Status', render: (p) => <Pill tone={p.active !== false ? 'green' : 'amber'}>{p.active !== false ? 'Active' : 'Inactive'}</Pill> },
+                ...(canWrite ? [{ label: '', align: 'r', render: (p) => (
+                  <span style={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => openEdit(p)} style={miniBtn(C.accent)}>Edit</button>
+                    {p.active !== false && <button onClick={(e) => deactivate(e, p)} style={{ ...miniBtn(C.red), marginLeft: 6 }}>Deactivate</button>}
+                  </span>
+                ) }] : []),
+              ]}
+            />
           )}
         </Card>
       </Body>
