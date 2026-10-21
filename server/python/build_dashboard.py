@@ -250,6 +250,27 @@ def build(job):
     df = _coerce_numeric(df)
     df = _apply_derived(df, spec.get("derived"), warnings)
 
+    # Selector decided up front: it drives the interactive dropdown AND makes the
+    # breakdown charts + dynamic KPI cards recompute live when the user changes it.
+    selector = spec.get("selector")
+    if selector not in df.columns:
+        selector = None
+
+    # Period helper (YYYY-MM) for the "vs previous period" KPI deltas. Only added
+    # when a real date column is present and spans >= 2 months; otherwise the cards
+    # omit the delta line rather than invent a baseline.
+    period_col = latest_period = prev_period = None
+    _pcol, _pser = _detect_dates(df)
+    if _pcol is not None:
+        try:
+            _per = _pser.dt.to_period("M").astype(str)
+            df["Period"] = _per.where(_pser.notna(), other=None)
+            _ups = sorted(p for p in df["Period"].dropna().unique())
+            if len(_ups) >= 2:
+                period_col, latest_period, prev_period = "Period", _ups[-1], _ups[-2]
+        except Exception as e:  # noqa
+            warnings.append(f"period: {e}")
+
     brand = spec.get("brand") or {}
     primary = brand.get("primary") or "#012158"
     accent = brand.get("accent") or "#168eff"
@@ -338,6 +359,16 @@ def build(job):
         letter = xl_col_to_name(ci)
         return f"Data!${letter}${2}:${letter}${last_row + 1}"
 
+    # Live-formula wiring. When a selector column exists, the breakdown values and
+    # dynamic KPIs reference the dropdown cell (Dashboard!$D$5), so the cards and
+    # charts recompute the instant the user changes the filter — no macros.
+    SEL_LOCAL = "$D$5"            # dropdown cell, referenced from the Dashboard sheet
+    SEL_FULL = "Dashboard!$D$5"   # same cell, referenced from the Analysis sheet
+    sel_range = col_range(selector) if selector else None
+    per_range = col_range(period_col) if period_col else None
+    anchor_col = list(df.columns)[0]
+    anchor_range = col_range(anchor_col)
+
     # ---------- ANALYSIS sheet (summary tables feed the charts) ---------- #
     ws_an = wb.add_worksheet("Analysis")
     ws_an.set_column(0, 0, 28)
@@ -356,11 +387,46 @@ def build(job):
         header_row = an_row
         an_row += 1
         start = an_row
-        fmt_code = _fmt_code(bd.get("format") or ("money" if "salary" in str(bd.get("field") or "").lower() else "int"), currency)
+        agg = (bd.get("agg") or "count").lower()
+        by = bd.get("by")
+        field = bd.get("field")
+        dimR = col_range(by) if by in df.columns else None
+        fldR = col_range(field) if (field in df.columns) else None
+        fmt_code = _fmt_code(bd.get("format") or ("money" if "salary" in str(field or "").lower() else "int"), currency)
         valfmt = num_format(fmt_code)
+        # Live when a selector exists and the agg is formula-expressible. The value
+        # cell references its own label in column A ($A<row>), so no category text
+        # is inlined (quote-safe) and the chart redraws when the dropdown changes.
+        live = bool(selector) and dimR is not None and agg in ("count", "sum", "mean")
         for _, r in tbl.iterrows():
-            ws_an.write(an_row, 0, str(r[dim_name]), f_cell)
-            ws_an.write_number(an_row, 1, float(r[meas_name]), valfmt)
+            lab = str(r[dim_name])
+            sval = float(r[meas_name])
+            excel_r = an_row + 1                      # 1-based Excel row of this line
+            aref = f"$A${excel_r}"
+            ws_an.write(an_row, 0, lab, f_cell)
+            if live and lab != "Other":
+                if agg == "count":
+                    f = (f'=IF({SEL_FULL}="(All)",COUNTIF({dimR},{aref}),'
+                         f'COUNTIFS({dimR},{aref},{sel_range},{SEL_FULL}))')
+                elif agg == "sum":
+                    f = (f'=IF({SEL_FULL}="(All)",SUMIFS({fldR},{dimR},{aref}),'
+                         f'SUMIFS({fldR},{dimR},{aref},{sel_range},{SEL_FULL}))')
+                else:  # mean
+                    f = (f'=IF({SEL_FULL}="(All)",IFERROR(AVERAGEIFS({fldR},{dimR},{aref}),0),'
+                         f'IFERROR(AVERAGEIFS({fldR},{dimR},{aref},{sel_range},{SEL_FULL}),0))')
+                ws_an.write_formula(an_row, 1, f, valfmt, sval)
+            elif live and lab == "Other" and agg in ("count", "sum"):
+                # Residual = (total under the current filter) − (the shown rows above).
+                shown = f"$B${start + 1}:$B${excel_r - 1}"
+                if agg == "count":
+                    f = (f'=IF({SEL_FULL}="(All)",COUNTA({anchor_range})-SUM({shown}),'
+                         f'COUNTIF({sel_range},{SEL_FULL})-SUM({shown}))')
+                else:
+                    f = (f'=IF({SEL_FULL}="(All)",SUM({fldR})-SUM({shown}),'
+                         f'SUMIFS({fldR},{sel_range},{SEL_FULL})-SUM({shown}))')
+                ws_an.write_formula(an_row, 1, f, valfmt, sval)
+            else:
+                ws_an.write_number(an_row, 1, sval, valfmt)
             an_row += 1
         end = an_row - 1
         chart_specs.append({
@@ -614,105 +680,179 @@ def build(job):
     ws.hide_gridlines(2)
     ws.set_column("A:A", 2)
     for c in range(1, 13):
-        ws.set_column(c, c, 13)
+        ws.set_column(c, c, 11)
+    charts_added = 0
+
     # Title band (two stacked merged rows — no overlapping ranges)
-    ws.merge_range(1, 1, 1, 12, title, wb.add_format({**base_font, "font_size": 20, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "valign": "vcenter"}))
-    ws.merge_range(2, 1, 2, 12, subtitle, wb.add_format({**base_font, "font_size": 10, "font_color": "#DCE7F7", "bg_color": primary, "valign": "vcenter"}))
-    ws.set_row(1, 30)
+    ws.merge_range(1, 1, 1, 12, title, wb.add_format({**base_font, "font_size": 20, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "valign": "vcenter", "indent": 1}))
+    ws.merge_range(2, 1, 2, 12, subtitle, wb.add_format({**base_font, "font_size": 10, "font_color": "#DCE7F7", "bg_color": primary, "valign": "vcenter", "indent": 1}))
+    ws.set_row(1, 34)
     ws.set_row(2, 18)
 
-    # KPI cards (static, pandas-computed)
-    kpis = spec.get("kpis") or [{"label": "Total Records", "agg": "count"}]
-    kpi_row0 = 4
-    col = 1
-    span = 3  # each card spans 3 columns
-    for i, kpi in enumerate(kpis[:4]):
-        val = _kpi_value(df, kpi, warnings)
-        fmt = (kpi.get("format") or ("pct" if kpi.get("agg") == "ratio" else "int")).lower()
-        code = _fmt_code(fmt, currency)
-        c0 = col + (i % 4) * span
-        write_kpi(kpi_row0, c0, span, (kpi.get("label") or ""), code, value=val, num_color=primary)
+    # ---- Slicer (interactive dropdown at D5 = SEL cell) ----
+    SLICER_ROW = 4
+    if selector:
+        f_sl_lab = wb.add_format({**base_font, "font_size": 9, "bold": True, "font_color": "#FFFFFF", "bg_color": accent, "align": "center", "valign": "vcenter"})
+        f_sl_val = wb.add_format({**base_font, "font_size": 11, "bold": True, "font_color": primary, "bg_color": "#FFF8E6", "border": 1, "border_color": "#FFD98A", "align": "center", "valign": "vcenter"})
+        ws.merge_range(SLICER_ROW, 1, SLICER_ROW, 2, f"FILTER — {selector}".upper(), f_sl_lab)
+        ws.merge_range(SLICER_ROW, 3, SLICER_ROW, 4, "(All)", f_sl_val)      # D5:E5, top-left D5 == SEL_LOCAL
+        values = ["(All)"] + sorted(str(v) for v in df[selector].dropna().unique())[:200]
+        ws.data_validation(SLICER_ROW, 3, SLICER_ROW, 3, {"validate": "list", "source": values})
+        ws.write(SLICER_ROW, 5, "↳ pick a value — the cards and charts update live", f_note)
+        ws.set_row(SLICER_ROW, 22)
 
-    charts_added = 0
-    # Interactive selector + dynamic KPIs
-    sel_dim = spec.get("selector")
-    dyn_row = kpi_row0 + 4
-    if sel_dim and sel_dim in df.columns:
-        values = ["(All)"] + sorted([str(v) for v in df[sel_dim].dropna().unique()])[:200]
-        ws.write(dyn_row, 1, f"FILTER — {sel_dim}".upper(), f_sel_label)
-        sel_cell_row, sel_cell_col = dyn_row, 2
-        ws.write(sel_cell_row, sel_cell_col, "(All)", f_sel_val)
-        ws.data_validation(sel_cell_row, sel_cell_col, sel_cell_row, sel_cell_col,
-                           {"validate": "list", "source": values})
-        sel_ref = f"${xl_col_to_name(sel_cell_col)}${sel_cell_row + 1}"
-        ws.write(dyn_row, 4, "↳ Pick a value to update the cards below", f_note)
+    # ---- KPI cards: big number (live) + vs-previous delta (▲/▼ %) ----
+    kpis = (spec.get("kpis") or [{"label": "Total Records", "agg": "count"}])[:4]
+    KPI_LAB, KPI_VAL, KPI_DLT = 6, 7, 8
+    span = 3
+    delta_code = '[Green]▲ 0.0%;[Red]▼ 0.0%;0.0%'
+    f_k_lab = wb.add_format({**base_font, "font_size": 9, "bold": True, "font_color": "#5B6B86", "bg_color": CARD_BG, "align": "left", "valign": "vcenter", "indent": 1})
 
-        dyn_cards_row = dyn_row + 2
-        dkpis = [k for k in kpis if (k.get("agg") in ("count", "mean", "sum", "ratio"))][:4]
-        selrange = col_range(sel_dim)
-        for i, kpi in enumerate(dkpis):
-            agg = kpi.get("agg")
-            field = kpi.get("field")
-            fmt = (kpi.get("format") or ("pct" if agg == "ratio" else "int")).lower()
-            code = _fmt_code(fmt, currency)
-            cached = _kpi_value(df, kpi, warnings)
-            anchor = list(df.columns)[0]
+    def _kpi_value_formula(kpi):
+        """Big-number formula that reacts to the dropdown, or None (→ static)."""
+        if not selector:
+            return None
+        agg = (kpi.get("agg") or "count").lower()
+        field = kpi.get("field")
+        fR = col_range(field) if field in df.columns else None
+        if agg == "count":
+            return f'=IF({SEL_LOCAL}="(All)",COUNTA({anchor_range}),COUNTIF({sel_range},{SEL_LOCAL}))'
+        if agg in ("sum", "mean") and fR:
+            fn, fns = ("SUM", "SUMIFS") if agg == "sum" else ("AVERAGE", "AVERAGEIFS")
+            return f'=IFERROR(IF({SEL_LOCAL}="(All)",{fn}({fR}),{fns}({fR},{sel_range},{SEL_LOCAL})),0)'
+        if agg == "ratio" and fR:
+            m = kpi.get("match")
+            return (f'=IFERROR(IF({SEL_LOCAL}="(All)",COUNTIF({fR},"{m}")/COUNTA({fR}),'
+                    f'COUNTIFS({fR},"{m}",{sel_range},{SEL_LOCAL})/COUNTIFS({sel_range},{SEL_LOCAL})),0)')
+        return None
+
+    def _kpi_period_exprs(kpi):
+        """(current, previous) period sub-expressions for the delta, or None.
+        Reacts to the dropdown too when a selector exists."""
+        if not period_col:
+            return None
+        agg = (kpi.get("agg") or "count").lower()
+        if agg not in ("count", "sum", "mean"):
+            return None
+        field = kpi.get("field")
+        fR = col_range(field) if field in df.columns else None
+        if agg in ("sum", "mean") and not fR:
+            return None
+
+        def expr(pv):
             if agg == "count":
-                formula = (f'=IF({sel_ref}="(All)",COUNTA({col_range(anchor)}),'
-                           f'COUNTIF({selrange},{sel_ref}))')
-            elif agg in ("mean", "sum") and field in df.columns:
-                fn = "AVERAGE" if agg == "mean" else "SUM"
-                fnifs = "AVERAGEIFS" if agg == "mean" else "SUMIFS"
-                formula = (f'=IFERROR(IF({sel_ref}="(All)",{fn}({col_range(field)}),'
-                           f'{fnifs}({col_range(field)},{selrange},{sel_ref})),0)')
-            elif agg == "ratio" and field in df.columns:
-                match = kpi.get("match")
-                fr = col_range(field)
-                formula = (f'=IFERROR(IF({sel_ref}="(All)",'
-                           f'COUNTIF({fr},"{match}")/COUNTA({fr}),'
-                           f'COUNTIFS({fr},"{match}",{selrange},{sel_ref})/COUNTIFS({selrange},{sel_ref})),0)')
-            else:
-                continue
-            c0 = col + (i % 4) * span
-            write_kpi(dyn_cards_row, c0, span, (kpi.get("label") or ""), code, formula=formula, cached=cached, num_color=accent)
-        charts_start = dyn_cards_row + 5
-    else:
-        charts_start = dyn_row
+                base = f'COUNTIF({per_range},"{pv}")'
+                filt = f'COUNTIFS({per_range},"{pv}",{sel_range},{SEL_LOCAL})'
+            elif agg == "sum":
+                base = f'SUMIFS({fR},{per_range},"{pv}")'
+                filt = f'SUMIFS({fR},{per_range},"{pv}",{sel_range},{SEL_LOCAL})'
+            else:  # mean
+                base = f'IFERROR(AVERAGEIFS({fR},{per_range},"{pv}"),0)'
+                filt = f'IFERROR(AVERAGEIFS({fR},{per_range},"{pv}",{sel_range},{SEL_LOCAL}),0)'
+            return f'IF({SEL_LOCAL}="(All)",{base},{filt})' if selector else base
 
-    # Charts (native, interactive)
-    ws.write(charts_start - 1, 1, "BREAKDOWNS", f_section)
-    positions = [(charts_start, 1), (charts_start, 7), (charts_start + 16, 1), (charts_start + 16, 7)]
+        return expr(latest_period), expr(prev_period)
+
+    def _period_scalar(kpi, pv):
+        """Full-data (All) value of a KPI within one period — the cached value so
+        the delta shows correctly before Excel/LibreOffice recalculates."""
+        agg = (kpi.get("agg") or "count").lower()
+        field = kpi.get("field")
+        sub = df[df[period_col] == pv]
+        if agg == "count":
+            return float(len(sub))
+        if field in df.columns:
+            s = pd.to_numeric(sub[field], errors="coerce")
+            if agg == "sum":
+                return float(s.sum())
+            if agg == "mean":
+                return float(s.mean()) if s.notna().any() else 0.0
+        return 0.0
+
+    for i, kpi in enumerate(kpis):
+        c0 = 1 + (i % 4) * span
+        label = (kpi.get("label") or "").upper()
+        agg = (kpi.get("agg") or "count").lower()
+        fmt = (kpi.get("format") or ("pct" if agg == "ratio" else "int")).lower()
+        code = _fmt_code(fmt, currency)
+        cached = _kpi_value(df, kpi, warnings)
+        val_fmt = wb.add_format({**base_font, "font_size": 18, "bold": True, "font_color": primary, "num_format": code, "bg_color": CARD_BG, "align": "left", "valign": "vcenter", "indent": 1})
+        # Label + value merged across the whole card, so money never renders as ###.
+        ws.merge_range(KPI_LAB, c0, KPI_LAB, c0 + span - 1, label, f_k_lab)
+        ws.merge_range(KPI_VAL, c0, KPI_VAL, c0 + span - 1, "", val_fmt)
+        vf = _kpi_value_formula(kpi)
+        if vf:
+            ws.write_formula(KPI_VAL, c0, vf, val_fmt, cached)
+        else:
+            ws.write_number(KPI_VAL, c0, cached, val_fmt)
+        # Delta row: "vs prev N" (left) + colored ▲/▼ % (right), both live.
+        ex = _kpi_period_exprs(kpi)
+        if ex:
+            cur, prev = ex
+            cur_c = _period_scalar(kpi, latest_period)
+            prev_c = _period_scalar(kpi, prev_period)
+            delta_c = (cur_c - prev_c) / prev_c if prev_c else 0.0
+            prev_txt = f"vs prev {prev_c:,.1f}" if fmt == "float" else f"vs prev {prev_c:,.0f}"
+            # The money format code embeds quotes (e.g. "$"#,##0); double them so
+            # they survive as a string literal inside TEXT(...) — otherwise the
+            # inner quotes close the formula string early (Excel #VALUE / LO Err:508).
+            code_esc = code.replace('"', '""')
+            prev_fmt = wb.add_format({**base_font, "font_size": 8, "font_color": "#8B96A9", "bg_color": CARD_BG, "align": "left", "valign": "vcenter", "indent": 1})
+            dlt_fmt = wb.add_format({**base_font, "font_size": 9, "bold": True, "num_format": delta_code, "bg_color": CARD_BG, "align": "right", "valign": "vcenter"})
+            ws.merge_range(KPI_DLT, c0, KPI_DLT, c0 + span - 2, "", prev_fmt)
+            ws.write_formula(KPI_DLT, c0, f'="vs prev "&TEXT({prev},"{code_esc}")', prev_fmt, prev_txt)
+            ws.write_formula(KPI_DLT, c0 + span - 1, f'=IFERROR(({cur}-{prev})/{prev},0)', dlt_fmt, delta_c)
+        else:
+            ws.merge_range(KPI_DLT, c0, KPI_DLT, c0 + span - 1, "", wb.add_format({"bg_color": CARD_BG}))
+    ws.set_row(KPI_VAL, 28)
+    ws.set_row(KPI_DLT, 15)
+
+    # ---- Charts (native, interactive): sources are the selector-driven Analysis
+    #      ranges, so each chart redraws when the dropdown changes. ----
+    charts_start = KPI_DLT + 2
+    ws.write(charts_start, 1, "BREAKDOWNS", f_section)
+    grid = [(charts_start + 1, 1), (charts_start + 1, 7), (charts_start + 16, 1), (charts_start + 16, 7)]
     palette = [accent, primary, "#1f9d57", "#c77700", "#7c5cdf", "#17a2b8", "#e5484d", "#0b6fd6"]
     for idx, cs in enumerate(chart_specs[:4]):
         ctype = cs["type"]
-        chart = wb.add_chart({"type": "pie" if ctype == "pie" else ("bar" if ctype == "bar" else ("line" if ctype == "line" else "column"))})
+        xtype = "doughnut" if ctype == "pie" else ("bar" if ctype == "bar" else ("line" if ctype == "line" else "column"))
+        chart = wb.add_chart({"type": xtype})
         series = {
             "name": cs["name"],
             "categories": cs["cats"],
             "values": cs["vals"],
             "data_labels": {"value": True, "font": {"name": "Arial", "size": 8}},
         }
-        if ctype == "pie":
-            series["points"] = [{"fill": {"color": palette[i % len(palette)]}} for i in range(12)]
+        if xtype == "doughnut":
+            series["points"] = [{"fill": {"color": palette[i % len(palette)]}} for i in range(16)]
         else:
             series["fill"] = {"color": accent}
-            series["gap"] = 80
+            series["gap"] = 70
         chart.add_series(series)
         chart.set_title({"name": cs["title"], "name_font": {"name": "Arial", "size": 11, "bold": True, "color": primary}})
-        chart.set_legend({"position": "bottom" if ctype == "pie" else "none"})
-        chart.set_size({"width": 400, "height": 300})
-        if ctype not in ("pie",):
+        chart.set_legend({"position": "bottom" if xtype == "doughnut" else "none"})
+        chart.set_size({"width": 430, "height": 300})
+        if xtype == "doughnut":
+            chart.set_hole_size(55)
+        else:
             chart.set_x_axis({"num_font": {"name": "Arial", "size": 8}})
             chart.set_y_axis({"num_font": {"name": "Arial", "size": 8}})
-        r, c = positions[idx]
+        r, c = grid[idx]
         ws.insert_chart(r, c, chart)
         charts_added += 1
 
     # Footer note
-    foot = charts_start + 33
-    ws.write(foot, 1, "Figures computed from the source data. Charts and the filter are live — open in Excel to interact.", f_note)
+    foot = charts_start + 31
+    ws.write(foot, 1, "Figures are computed from the source data. The dropdown, cards and charts are live — open in Excel and change the filter.", f_note)
     if warnings:
         ws.write(foot + 1, 1, "Notes: " + "; ".join(warnings[:6]), f_note)
+
+    # Single-canvas print / PDF: landscape, scaled to one page.
+    ws.set_landscape()
+    ws.set_paper(8)          # A3 gives the tiled grid room before fit-to-1-page scales it
+    ws.fit_to_pages(1, 1)
+    ws.set_margins(0.2, 0.2, 0.2, 0.2)
+    ws.print_area(0, 0, foot + 2, 12)
 
     # ---------- AI INSIGHTS sheet (optional, from spec.narrative) ---------- #
     narr = spec.get("narrative") or {}
