@@ -122,6 +122,37 @@ function jaccard(a, b) {
   return inter / (A.size + B.size - inter);
 }
 
+// Words that are too common to carry a match on their own. A header that only
+// shares one of these with a field name ("END DATE" vs "birth DATE", "NAME of
+// participant" vs "first NAME") must NOT map on that basis alone.
+const GENERIC = new Set(['of', 'the', 'and', 'a', 'no', 'number', 'num', 'id',
+  'date', 'name', 'names', 'type', 'status', 'code', 'year', 'month', 'day',
+  'days', 'hr', 'hrs', 'hour', 'hours', 'employee', 'staff', 'emp', 'person']);
+
+// Non-generic tokens shared between two strings (what a real match hinges on).
+function sharedDistinct(a, b) {
+  const B = new Set(tokens(b));
+  return [...new Set(tokens(a))].filter((t) => B.has(t) && !GENERIC.has(t));
+}
+
+// Phrase containment at the TOKEN level: is one header's words a contiguous run
+// inside the other's? (So "age" is NOT "contained in" "marriage".) A lone generic
+// token never counts as a containment.
+function phraseContains(h, name) {
+  const ht = tokens(h), nt = tokens(name);
+  const run = (a, b) => {
+    if (!a.length || a.length > b.length) return false;
+    if (a.length === 1 && GENERIC.has(a[0])) return false;
+    for (let i = 0; i + a.length <= b.length; i++) {
+      let ok = true;
+      for (let k = 0; k < a.length; k++) { if (b[i + k] !== a[k]) { ok = false; break; } }
+      if (ok) return true;
+    }
+    return false;
+  };
+  return run(ht, nt) || run(nt, ht);
+}
+
 /* --------------------------- the matcher core --------------------------- */
 // Score one header against one catalogue entry. Returns {score, reason}.
 function scoreField(header, entry) {
@@ -134,10 +165,16 @@ function scoreField(header, entry) {
     const n = norm(name);
     if (h === n) return { score: 1, reason: `matches “${name}”` };           // exact synonym — unbeatable
     if (hc === compact(name)) consider(0.97, `matches “${name}”`);            // exact ignoring spacing
-    // whole-synonym contained as a phrase (e.g. header "basic pay (ghs)" ⊃ "basic pay")
-    if (n.length >= 3 && (h.includes(n) || n.includes(h))) consider(0.86, `contains “${name}”`);
+    // whole-synonym contained as a PHRASE at token level (e.g. "basic pay (ghs)"
+    // ⊃ "basic pay"), never a bare substring ("age" ⊄ "marriage").
+    if (phraseContains(h, name)) consider(0.86, `contains “${name}”`);
     const j = jaccard(h, name);
-    if (j > 0) consider(0.6 + 0.3 * j, `word overlap with “${name}”`);
+    if (j > 0) {
+      // A shared GENERIC word alone ("date", "name", "no") can't carry a match
+      // over the line; it needs at least one distinctive word in common.
+      const sc = 0.6 + 0.3 * j;
+      consider(sharedDistinct(h, name).length ? sc : Math.min(sc, 0.5), `word overlap with “${name}”`);
+    }
     const r = ratio(h, name);
     if (r >= 0.82) consider(0.55 + 0.4 * (r - 0.82) / 0.18, `close spelling to “${name}”`);
   }
@@ -249,18 +286,30 @@ function splitFullName(v) {
   return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
 }
 
+// Does this header denote a whole person's name (so it should be split into
+// first + last), rather than a specific first/last/other-names field? Catches
+// "Name", "Full Name", "Name of Participant", "Participant Name", "Employee Name".
+function isPersonNameHeader(h) {
+  const n = norm(h);
+  if (FULLNAME_SYNS.includes(n)) return true;
+  const t = tokens(n);
+  if (!t.includes('name') && !t.includes('names')) return false;
+  // Exclude columns that are clearly a specific part or a different person.
+  if (/\b(first|given|fore|other|last|sur|family|user|file|preferred|nick|known|father|mother|next|kin|spouse|emergency|contact|bank|account|maiden)\b/.test(n)) return false;
+  return true;
+}
+
 // Decide whether a single "name" column should be split into first + last.
-// An explicit full-name header (exactly "Name" / "Full Name" / …) wins unless a
-// real first OR last name is mapped from a DIFFERENT column. Otherwise, only when
-// no first/last is mapped at all, fall back to any unmapped name-ish column.
+// A clear person-name column (e.g. "Name of Participant") is split UNLESS a real
+// first AND last name are already mapped from OTHER, non-name columns — so a weak
+// first-name match on the name column itself never blocks the split.
 function detectFullNameColumn(headers, mapping) {
   const mp = mapping || [];
-  const explicit = (headers || []).find((h) => FULLNAME_SYNS.includes(norm(h)));
-  if (explicit) {
-    const otherFirst = mp.some((m) => m.field === 'firstName' && m.source !== explicit);
-    const otherLast = mp.some((m) => m.field === 'lastName' && m.source !== explicit);
-    return (otherFirst || otherLast) ? null : explicit;
-  }
+  const nameCols = (headers || []).filter(isPersonNameHeader);
+  const sepFirst = mp.some((m) => m.field === 'firstName' && !isPersonNameHeader(m.source));
+  const sepLast = mp.some((m) => m.field === 'lastName' && !isPersonNameHeader(m.source));
+  if (sepFirst && sepLast) return null;           // proper first + last provided elsewhere
+  if (nameCols.length) return nameCols[0];
   if (mp.some((m) => m.field === 'firstName' || m.field === 'lastName')) return null;
   const used = new Set(mp.map((m) => m.source));
   return (headers || []).find((h) => !used.has(h) && norm(h).includes('name') && !norm(h).includes('user') && !norm(h).includes('file')) || null;
