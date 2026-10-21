@@ -97,9 +97,13 @@ async function specFromPrompt({ prompt, schema, title, brand, currency }) {
     '  "selector": <a category column to use as the interactive filter, or omit>,',
     '  "derived": [ { "name": string, "from": <number column>, "type": "bucket", "bins": [numbers], "labels": [strings] } ],',
     '  "kpis": [ { "label": string, "agg": "count"|"sum"|"mean"|"ratio"|"distinct", "field": <number or category column, if needed>, "match": <value, only for ratio>, "format": "int"|"float"|"money"|"pct" } ],',
-    '  "breakdowns": [ { "title": string, "by": <category column>, "agg": "count"|"sum"|"mean", "field": <number column, for sum/mean>, "chart": "column"|"bar"|"pie"|"line", "format": "int"|"money"|"float", "top": number } ]',
+    '  "breakdowns": [ { "title": string, "by": <category column>, "agg": "count"|"sum"|"mean", "field": <number column, for sum/mean>, "chart": "column"|"bar"|"pie"|"line", "format": "int"|"money"|"float", "top": number } ],',
+    '  "stacked": [ { "title": string, "by": <category column, the axis>, "stackBy": <a DIFFERENT category column, the segments>, "agg": "count"|"sum"|"mean", "field": <number column, for sum/mean>, "chart": "column"|"bar" } ],',
+    '  "combo": { "title": string, "field": <number column, e.g. a cost>, "sumLabel": string, "avgLabel": string },',
+    '  "statusTable": { "title": string, "by": <category column>, "field": <number column, e.g. a cost>, "sumLabel": string, "avgLabel": string, "top": number }',
     '}',
     'Guidance: 3–5 KPIs (headcount/count, averages, totals, and a ratio like attrition if a status column exists). 3–6 breakdowns across the most insightful dimensions. Pick a sensible selector (e.g. department). Use "money" format for salary/pay fields. Add a derived age/tenure band if an age or tenure number column exists. Keep titles short and human.',
+    'Add ONE "stacked" when two meaningful low-cardinality categories exist (e.g. status by employee tier). Add a "combo" dual-axis trend over time for the main money field (total as columns + per-employee mean as a line) — only meaningful when a date column exists. Add a "statusTable" for a money field by a key category (e.g. training cost by department), which renders with red/amber/green indicator dots. Omit any you can\'t ground in real columns.',
     '',
     `CATEGORY columns: ${JSON.stringify(categories)}`,
     `NUMBER columns: ${JSON.stringify(numbers)}`,
@@ -172,6 +176,45 @@ function sanitizeSpec(spec, schema, { title, brand, currency }) {
     if (sal && cats[0]) bds.push({ title: `Average ${sal} by ${cats[0]}`, by: cats[0], agg: 'mean', field: sal, chart: 'bar', format: 'money', top: 12 });
   }
   out.breakdowns = bds;
+
+  // --- Phase 2 tiles: stacked crosstab, dual-axis combo trend, status table ---
+  // Accept what the model asked for (validated against real columns), then fill
+  // sensible defaults so the board is rich even when the model is terse.
+  const moneyRe = /salary|pay|wage|cost|amount|net|gross/i;
+  const moneyNum = nums.find((n) => moneyRe.test(n)) || nums[0];
+  const smallCats = schema.filter((c) => c.type === 'category' && c.distinct > 1 && c.distinct <= 8)
+    .sort((a, b) => a.distinct - b.distinct).map((c) => c.name);
+
+  out.stacked = (Array.isArray(spec.stacked) ? spec.stacked : [])
+    .filter((s) => s && isCat(s.by) && isCat(s.stackBy) && s.by !== s.stackBy
+      && ['count', 'sum', 'mean'].includes(s.agg || 'count')
+      && ((s.agg || 'count') === 'count' || isNum(s.field)))
+    .map((s) => ({ title: String(s.title || `${s.stackBy} by ${s.by}`), by: s.by, stackBy: s.stackBy,
+      agg: s.agg || 'count', field: (s.agg === 'sum' || s.agg === 'mean') ? s.field : undefined,
+      chart: s.chart === 'bar' ? 'bar' : 'column', format: FORMATS.includes(s.format) ? s.format : 'int' }))
+    .slice(0, 2);
+  if (!out.stacked.length && smallCats.length >= 2) {
+    out.stacked = [{ title: `${smallCats[1]} by ${smallCats[0]}`, by: smallCats[0], stackBy: smallCats[1],
+      agg: 'count', chart: 'column', format: 'int' }];
+  }
+
+  const cb = spec.combo;
+  if (cb && isNum(cb.field)) {
+    out.combo = { title: String(cb.title || `${cb.field} trend`), field: cb.field,
+      sumLabel: cb.sumLabel, avgLabel: cb.avgLabel, format: FORMATS.includes(cb.format) ? cb.format : 'money' };
+  } else if (moneyNum) {
+    out.combo = { title: `${moneyNum} trend`, field: moneyNum, format: moneyRe.test(moneyNum) ? 'money' : 'float' };
+  }
+
+  const stt = spec.statusTable;
+  if (stt && isCat(stt.by) && isNum(stt.field)) {
+    out.statusTable = { title: String(stt.title || `${stt.field} by ${stt.by}`), by: stt.by, field: stt.field,
+      sumLabel: stt.sumLabel, avgLabel: stt.avgLabel, format: FORMATS.includes(stt.format) ? stt.format : 'money',
+      top: Number.isInteger(stt.top) ? stt.top : 6 };
+  } else if (moneyNum && cats[0]) {
+    out.statusTable = { title: `${moneyNum} by ${cats[0]}`, by: cats[0], field: moneyNum,
+      format: moneyRe.test(moneyNum) ? 'money' : 'float', top: 6 };
+  }
 
   return out;
 }

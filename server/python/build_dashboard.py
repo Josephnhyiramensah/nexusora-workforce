@@ -52,7 +52,7 @@ import math
 import datetime as dt
 
 import pandas as pd
-from xlsxwriter.utility import xl_col_to_name
+from xlsxwriter.utility import xl_col_to_name, xl_rowcol_to_cell
 
 
 # --------------------------------------------------------------------------- #
@@ -438,6 +438,119 @@ def build(job):
         })
         an_row += 2  # spacer
 
+    # ---- Phase 2 helper tables (also live, selector-driven) ----
+    def _distinct(col, n):
+        s = df[col].astype(object).where(df[col].notna(), "Unknown").astype(str)
+        return [str(v) for v in s.value_counts().index[:n]]
+
+    # (A) Stacked crosstab: by (axis) × stackBy (segments). Each cell references
+    #     its row label ($A) and its column's segment header, so it's quote-safe
+    #     and recomputes under the dropdown.
+    stacked_specs = []
+    for st in (spec.get("stacked") or []):
+        by, stackBy = st.get("by"), st.get("stackBy")
+        agg = (st.get("agg") or "count").lower()
+        field = st.get("field")
+        if by not in df.columns or stackBy not in df.columns:
+            warnings.append(f"stacked '{st.get('title')}': missing by/stackBy")
+            continue
+        if agg in ("sum", "mean") and field not in df.columns:
+            warnings.append(f"stacked '{st.get('title')}': missing field")
+            continue
+        byR, stR = col_range(by), col_range(stackBy)
+        fR = col_range(field) if field in df.columns else None
+        cats = _distinct(by, int(st.get("topBy") or 12))
+        segs = _distinct(stackBy, int(st.get("topSeg") or 6))
+        code = _fmt_code(st.get("format") or ("money" if agg == "sum" and fR else "int"), currency)
+        vfmt = num_format(code)
+        ws_an.write(an_row, 0, st.get("title") or f"{by} × {stackBy}", f_section)
+        an_row += 1
+        hdr = an_row
+        ws_an.write(hdr, 0, by, f_hdr)
+        for j, seg in enumerate(segs):
+            ws_an.write(hdr, 1 + j, seg, f_hdr)
+        an_row += 1
+        ds = an_row
+        for cat in cats:
+            er = an_row + 1
+            ws_an.write(an_row, 0, cat, f_cell)
+            aref = f"$A${er}"
+            sub = df[df[by].astype(str) == cat]
+            for j, seg in enumerate(segs):
+                colL = xl_col_to_name(1 + j)
+                segref = f"{colL}${hdr + 1}"
+                if agg == "count":
+                    base = f'COUNTIFS({byR},{aref},{stR},{segref})'
+                    filt = f'COUNTIFS({byR},{aref},{stR},{segref},{sel_range},{SEL_FULL})'
+                    cached = float((sub[stackBy].astype(str) == seg).sum())
+                elif agg == "sum":
+                    base = f'SUMIFS({fR},{byR},{aref},{stR},{segref})'
+                    filt = f'SUMIFS({fR},{byR},{aref},{stR},{segref},{sel_range},{SEL_FULL})'
+                    cached = float(pd.to_numeric(sub[sub[stackBy].astype(str) == seg][field], errors="coerce").sum())
+                else:
+                    base = f'IFERROR(AVERAGEIFS({fR},{byR},{aref},{stR},{segref}),0)'
+                    filt = f'IFERROR(AVERAGEIFS({fR},{byR},{aref},{stR},{segref},{sel_range},{SEL_FULL}),0)'
+                    _s = pd.to_numeric(sub[sub[stackBy].astype(str) == seg][field], errors="coerce")
+                    cached = float(_s.mean()) if _s.notna().any() else 0.0
+                f = f'=IF({SEL_FULL}="(All)",{base},{filt})' if selector else f'={base}'
+                ws_an.write_formula(an_row, 1 + j, f, vfmt, cached)
+            an_row += 1
+        de = an_row - 1
+        series = []
+        for j, seg in enumerate(segs):
+            colL = xl_col_to_name(1 + j)
+            series.append({
+                "name": f"=Analysis!${colL}${hdr + 1}",
+                "cats": f"=Analysis!$A${ds + 1}:$A${de + 1}",
+                "vals": f"=Analysis!${colL}${ds + 1}:${colL}${de + 1}",
+            })
+        stacked_specs.append({"title": st.get("title") or f"{by} × {stackBy}",
+                              "orient": (st.get("chart") or "column"), "series": series})
+        an_row += 2
+
+    # (B) Dual-axis combo trend over periods: total (column, primary) + per-unit
+    #     mean (line, secondary). Needs a period column; reacts to the dropdown.
+    combo_spec = None
+    cb = spec.get("combo") or {}
+    if cb and period_col and (cb.get("field") in df.columns):
+        field = cb.get("field")
+        fR = col_range(field)
+        pers = sorted(p for p in df[period_col].dropna().unique())[-12:]
+        code = _fmt_code(cb.get("format") or "money", currency)
+        mfmt = num_format(code)
+        ws_an.write(an_row, 0, cb.get("title") or f"{field} trend", f_section)
+        an_row += 1
+        hrow = an_row
+        ws_an.write(hrow, 0, "Period", f_hdr)
+        ws_an.write(hrow, 1, cb.get("sumLabel") or f"Total {field}", f_hdr)
+        ws_an.write(hrow, 2, cb.get("avgLabel") or f"Per employee", f_hdr)
+        an_row += 1
+        ds = an_row
+        for p in pers:
+            er = an_row + 1
+            ws_an.write(an_row, 0, p, f_cell)
+            aref = f"$A${er}"
+            sub = df[df[period_col] == p]
+            s = pd.to_numeric(sub[field], errors="coerce")
+            cS = float(s.sum())
+            cA = float(s.mean()) if s.notna().any() else 0.0
+            bsum, fsum = f'SUMIFS({fR},{per_range},{aref})', f'SUMIFS({fR},{per_range},{aref},{sel_range},{SEL_FULL})'
+            bavg = f'IFERROR(AVERAGEIFS({fR},{per_range},{aref}),0)'
+            favg = f'IFERROR(AVERAGEIFS({fR},{per_range},{aref},{sel_range},{SEL_FULL}),0)'
+            fS = f'=IF({SEL_FULL}="(All)",{bsum},{fsum})' if selector else f'={bsum}'
+            fA = f'=IF({SEL_FULL}="(All)",{bavg},{favg})' if selector else f'={bavg}'
+            ws_an.write_formula(an_row, 1, fS, mfmt, cS)
+            ws_an.write_formula(an_row, 2, fA, mfmt, cA)
+            an_row += 1
+        de = an_row - 1
+        combo_spec = {
+            "title": cb.get("title") or f"{field} trend",
+            "cats": f"=Analysis!$A${ds + 1}:$A${de + 1}",
+            "sum_vals": f"=Analysis!$B${ds + 1}:$B${de + 1}", "sum_name": f"=Analysis!$B${hrow + 1}",
+            "avg_vals": f"=Analysis!$C${ds + 1}:$C${de + 1}", "avg_name": f"=Analysis!$C${hrow + 1}",
+        }
+        an_row += 2
+
     # ---------- CORRELATION MATRIX sheet ---------- #
     # Pearson r across numeric columns with enough data and variation. Heat-map
     # styled so relationships read at a glance. Pairwise-complete (pandas .corr).
@@ -807,42 +920,134 @@ def build(job):
     ws.set_row(KPI_VAL, 28)
     ws.set_row(KPI_DLT, 15)
 
-    # ---- Charts (native, interactive): sources are the selector-driven Analysis
-    #      ranges, so each chart redraws when the dropdown changes. ----
+    # ---- Tiles: native interactive charts + a conditional-format table, all
+    #      sourced from the selector-driven Analysis ranges so they move together. ----
     charts_start = KPI_DLT + 2
     ws.write(charts_start, 1, "BREAKDOWNS", f_section)
-    grid = [(charts_start + 1, 1), (charts_start + 1, 7), (charts_start + 16, 1), (charts_start + 16, 7)]
     palette = [accent, primary, "#1f9d57", "#c77700", "#7c5cdf", "#17a2b8", "#e5484d", "#0b6fd6"]
-    for idx, cs in enumerate(chart_specs[:4]):
-        ctype = cs["type"]
-        xtype = "doughnut" if ctype == "pie" else ("bar" if ctype == "bar" else ("line" if ctype == "line" else "column"))
-        chart = wb.add_chart({"type": xtype})
-        series = {
-            "name": cs["name"],
-            "categories": cs["cats"],
-            "values": cs["vals"],
-            "data_labels": {"value": True, "font": {"name": "Arial", "size": 8}},
-        }
-        if xtype == "doughnut":
-            series["points"] = [{"fill": {"color": palette[i % len(palette)]}} for i in range(16)]
-        else:
-            series["fill"] = {"color": accent}
-            series["gap"] = 70
-        chart.add_series(series)
-        chart.set_title({"name": cs["title"], "name_font": {"name": "Arial", "size": 11, "bold": True, "color": primary}})
-        chart.set_legend({"position": "bottom" if xtype == "doughnut" else "none"})
-        chart.set_size({"width": 430, "height": 300})
-        if xtype == "doughnut":
-            chart.set_hole_size(55)
-        else:
-            chart.set_x_axis({"num_font": {"name": "Arial", "size": 8}})
-            chart.set_y_axis({"num_font": {"name": "Arial", "size": 8}})
-        r, c = grid[idx]
-        ws.insert_chart(r, c, chart)
-        charts_added += 1
+    TILE_W, TILE_H = 6, 16          # 2 tiles per 12-column row
+    tile_row0 = charts_start + 1
+
+    # Assemble tiles in a display order so the canvas reads like a BI board.
+    prio = {"pie": 0, "combo": 1, "stacked": 2, "column": 3, "bar": 4, "line": 5, "table": 6}
+    tiles = []
+    if combo_spec:
+        tiles.append((prio["combo"], "combo", combo_spec))
+    for cs in chart_specs:
+        tiles.append((prio.get(cs["type"], 3), "chart", cs))
+    for ss in stacked_specs:
+        tiles.append((prio["stacked"], "stacked", ss))
+    stt = spec.get("statusTable") or {}
+    if stt and stt.get("by") in df.columns and stt.get("field") in df.columns:
+        tiles.append((prio["table"], "table", stt))
+    tiles.sort(key=lambda t: t[0])
+
+    def _place(i):
+        return tile_row0 + (i // 2) * TILE_H, 1 + (i % 2) * TILE_W
+
+    def _axes(ch):
+        ch.set_x_axis({"num_font": {"name": "Arial", "size": 8}})
+        ch.set_y_axis({"num_font": {"name": "Arial", "size": 8}})
+
+    def _render_status_table(r0, c0, stt):
+        by, field = stt["by"], stt["field"]
+        byR, fR = col_range(by), col_range(field)
+        top = int(stt.get("top") or 6)
+        g = df.copy()
+        g[field] = pd.to_numeric(g[field], errors="coerce")
+        order = g.groupby(by)[field].sum().sort_values(ascending=False)
+        cats = [str(x) for x in order.index[:top]]
+        code = _fmt_code(stt.get("format") or "money", currency)
+        hL = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "border": 1, "border_color": "#2B4A74", "align": "left", "valign": "vcenter"})
+        hR = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "border": 1, "border_color": "#2B4A74", "align": "right", "valign": "vcenter"})
+        labf = wb.add_format({**base_font, "font_size": 10, "border": 1, "border_color": "#E3EAF5"})
+        totf = wb.add_format({**base_font, "font_size": 10, "num_format": code, "border": 1, "border_color": "#E3EAF5", "align": "right"})
+        avgf = wb.add_format({**base_font, "font_size": 10, "num_format": code, "border": 1, "border_color": "#E3EAF5", "align": "right"})
+        ws.write(r0, c0, stt.get("title") or f"{field} by {by}", f_section)
+        hr = r0 + 1
+        ws.merge_range(hr, c0, hr, c0 + 2, by, hL)
+        ws.merge_range(hr, c0 + 3, hr, c0 + 4, stt.get("sumLabel") or f"Total {field}", hR)
+        ws.write(hr, c0 + 5, stt.get("avgLabel") or "Per emp", hR)
+        rr = hr + 1
+        first = rr
+        for cat in cats:
+            subtot = float(order.get(cat, 0.0))
+            subm = g[g[by].astype(str) == cat][field]
+            cavg = float(subm.mean()) if subm.notna().any() else 0.0
+            labref = xl_rowcol_to_cell(rr, c0)                 # the label cell, e.g. "H23"
+            if selector:
+                ftot = f'=IF({SEL_LOCAL}="(All)",SUMIFS({fR},{byR},{labref}),SUMIFS({fR},{byR},{labref},{sel_range},{SEL_LOCAL}))'
+                favg = f'=IF({SEL_LOCAL}="(All)",IFERROR(AVERAGEIFS({fR},{byR},{labref}),0),IFERROR(AVERAGEIFS({fR},{byR},{labref},{sel_range},{SEL_LOCAL}),0))'
+            else:
+                ftot = f'=SUMIFS({fR},{byR},{labref})'
+                favg = f'=IFERROR(AVERAGEIFS({fR},{byR},{labref}),0)'
+            ws.merge_range(rr, c0, rr, c0 + 2, cat, labf)
+            ws.merge_range(rr, c0 + 3, rr, c0 + 4, "", totf)
+            ws.write_formula(rr, c0 + 3, ftot, totf, subtot)
+            ws.write_formula(rr, c0 + 5, favg, avgf, cavg)
+            rr += 1
+        if rr - 1 >= first:
+            ws.conditional_format(first, c0 + 5, rr - 1, c0 + 5, {"type": "icon_set", "icon_style": "3_traffic_lights"})
+
+    for idx, (_, kind, spc) in enumerate(tiles):
+        r, c = _place(idx)
+        if kind == "chart":
+            ctype = spc["type"]
+            xtype = "doughnut" if ctype == "pie" else ("bar" if ctype == "bar" else ("line" if ctype == "line" else "column"))
+            chart = wb.add_chart({"type": xtype})
+            series = {"name": spc["name"], "categories": spc["cats"], "values": spc["vals"],
+                      "data_labels": {"value": True, "font": {"name": "Arial", "size": 8}}}
+            if xtype == "doughnut":
+                series["points"] = [{"fill": {"color": palette[i % len(palette)]}} for i in range(16)]
+            else:
+                series["fill"] = {"color": accent}
+                series["gap"] = 70
+            chart.add_series(series)
+            chart.set_title({"name": spc["title"], "name_font": {"name": "Arial", "size": 11, "bold": True, "color": primary}})
+            chart.set_legend({"position": "bottom" if xtype == "doughnut" else "none"})
+            chart.set_size({"width": 430, "height": 300})
+            if xtype == "doughnut":
+                chart.set_hole_size(55)
+            else:
+                _axes(chart)
+            ws.insert_chart(r, c, chart)
+            charts_added += 1
+        elif kind == "stacked":
+            orient = "bar" if spc.get("orient") == "bar" else "column"
+            chart = wb.add_chart({"type": orient, "subtype": "stacked"})
+            for k, s in enumerate(spc["series"]):
+                chart.add_series({"name": s["name"], "categories": s["cats"], "values": s["vals"],
+                                  "fill": {"color": palette[k % len(palette)]}, "gap": 60})
+            chart.set_title({"name": spc["title"], "name_font": {"name": "Arial", "size": 11, "bold": True, "color": primary}})
+            chart.set_legend({"position": "bottom"})
+            chart.set_size({"width": 430, "height": 300})
+            _axes(chart)
+            ws.insert_chart(r, c, chart)
+            charts_added += 1
+        elif kind == "combo":
+            colc = wb.add_chart({"type": "column"})
+            colc.add_series({"name": spc["sum_name"], "categories": spc["cats"], "values": spc["sum_vals"],
+                             "fill": {"color": accent}, "gap": 50})
+            linec = wb.add_chart({"type": "line"})
+            linec.add_series({"name": spc["avg_name"], "categories": spc["cats"], "values": spc["avg_vals"],
+                              "y2_axis": True, "line": {"color": primary, "width": 2.0},
+                              "marker": {"type": "circle", "size": 5, "fill": {"color": primary}}})
+            colc.combine(linec)
+            colc.set_title({"name": spc["title"], "name_font": {"name": "Arial", "size": 11, "bold": True, "color": primary}})
+            colc.set_legend({"position": "bottom"})
+            colc.set_size({"width": 430, "height": 300})
+            colc.set_x_axis({"num_font": {"name": "Arial", "size": 7, "rotation": -45}})
+            colc.set_y_axis({"num_font": {"name": "Arial", "size": 8}})
+            colc.set_y2_axis({"num_font": {"name": "Arial", "size": 8}})
+            ws.insert_chart(r, c, colc)
+            charts_added += 1
+        elif kind == "table":
+            _render_status_table(r, c, spc)
+
+    tile_rows = (len(tiles) + 1) // 2
 
     # Footer note
-    foot = charts_start + 31
+    foot = tile_row0 + max(1, tile_rows) * TILE_H
     ws.write(foot, 1, "Figures are computed from the source data. The dropdown, cards and charts are live — open in Excel and change the filter.", f_note)
     if warnings:
         ws.write(foot + 1, 1, "Notes: " + "; ".join(warnings[:6]), f_note)
