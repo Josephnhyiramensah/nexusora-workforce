@@ -250,16 +250,20 @@ def build(job):
     df = _coerce_numeric(df)
     df = _apply_derived(df, spec.get("derived"), warnings)
 
-    # Selector decided up front: it drives the interactive dropdown AND makes the
-    # breakdown charts + dynamic KPI cards recompute live when the user changes it.
-    selector = spec.get("selector")
-    if selector not in df.columns:
-        selector = None
+    # Slicers: one or more dropdown dimensions, AND-combined so they compose. The
+    # multi-slicer form is `selectors`; a single `selector` is still accepted.
+    slicer_cols = spec.get("selectors")
+    if not isinstance(slicer_cols, list):
+        slicer_cols = [spec.get("selector")] if spec.get("selector") else []
+    seen = set()
+    slicer_cols = [c for c in slicer_cols if c in df.columns and not (c in seen or seen.add(c))][:4]
+    selector = slicer_cols[0] if slicer_cols else None   # legacy single-selector alias
 
-    # Period helper (YYYY-MM) for the "vs previous period" KPI deltas. Only added
-    # when a real date column is present and spans >= 2 months; otherwise the cards
-    # omit the delta line rather than invent a baseline.
+    # Period (YYYY-MM) for vs-previous deltas + the combo trend, and a real Date
+    # column (Excel date serials) so the From/To date-range filter compares
+    # numerically. Both only when a parseable date column exists.
     period_col = latest_period = prev_period = None
+    date_real_col = date_min = date_max = None
     _pcol, _pser = _detect_dates(df)
     if _pcol is not None:
         try:
@@ -268,6 +272,11 @@ def build(job):
             _ups = sorted(p for p in df["Period"].dropna().unique())
             if len(_ups) >= 2:
                 period_col, latest_period, prev_period = "Period", _ups[-1], _ups[-2]
+            df["Date"] = _pser.dt.date.where(_pser.notna(), other=None)
+            _valid = _pser.dropna()
+            if len(_valid):
+                date_real_col = "Date"
+                date_min, date_max = _valid.min().date(), _valid.max().date()
         except Exception as e:  # noqa
             warnings.append(f"period: {e}")
 
@@ -323,26 +332,36 @@ def build(job):
     ncols = len(df.columns)
     nrows = len(df)
     # Choose per-column number formats.
+    date_cols = {date_real_col} if date_real_col else set()
+    date_cell_fmt = wb.add_format({**base_font, "font_size": 10, "num_format": "yyyy-mm-dd", "border": 1, "border_color": "#E3EAF5"})
     col_meta = []
     for ci, col in enumerate(df.columns):
         s = df[col]
-        if _is_number_series(s):
+        if col in date_cols:
+            code = None
+        elif _is_number_series(s):
             looks_money = any(k in col.lower() for k in ("salary", "pay", "wage", "amount", "cost", "net", "gross"))
             code = _fmt_code("money", currency) if looks_money else _fmt_code("float" if s.dropna().mod(1).any() else "int", currency)
         else:
             code = None
         col_meta.append(code)
-        ws_data.set_column(ci, ci, max(12, min(32, int(s.astype(str).str.len().clip(upper=40).max() if nrows else 12) + 2)),
-                           num_format(code) if code else wb.add_format({**base_font, "font_size": 10}))
+        if col in date_cols:
+            ws_data.set_column(ci, ci, 13, date_cell_fmt)
+        else:
+            ws_data.set_column(ci, ci, max(12, min(32, int(s.astype(str).str.len().clip(upper=40).max() if nrows else 12) + 2)),
+                               num_format(code) if code else wb.add_format({**base_font, "font_size": 10}))
 
     # Write rows via table.
     table_cols = [{"header": str(c), "header_format": f_hdr} for c in df.columns]
     # Fill cells (xlsxwriter add_table writes the header; we write the body).
     for ci, col in enumerate(df.columns):
+        is_date = col in date_cols
         for ri in range(nrows):
             v = df.iat[ri, ci]
             if pd.isna(v):
                 ws_data.write_blank(ri + 1, ci, None, f_cell)
+            elif is_date:
+                ws_data.write_datetime(ri + 1, ci, dt.datetime(v.year, v.month, v.day), date_cell_fmt)
             elif col_meta[ci]:
                 ws_data.write_number(ri + 1, ci, float(v), num_format(col_meta[ci]))
             else:
@@ -359,15 +378,39 @@ def build(job):
         letter = xl_col_to_name(ci)
         return f"Data!${letter}${2}:${letter}${last_row + 1}"
 
-    # Live-formula wiring. When a selector column exists, the breakdown values and
-    # dynamic KPIs reference the dropdown cell (Dashboard!$D$5), so the cards and
-    # charts recompute the instant the user changes the filter — no macros.
-    SEL_LOCAL = "$D$5"            # dropdown cell, referenced from the Dashboard sheet
-    SEL_FULL = "Dashboard!$D$5"   # same cell, referenced from the Analysis sheet
-    sel_range = col_range(selector) if selector else None
     per_range = col_range(period_col) if period_col else None
-    anchor_col = list(df.columns)[0]
-    anchor_range = col_range(anchor_col)
+
+    # Live-formula wiring. Every slicer dropdown and the From/To date cells live on
+    # the Dashboard sheet at fixed addresses; each live formula AND-combines them as
+    # COUNTIFS/SUMIFS criteria, so the whole board recomputes when any one changes.
+    # A slicer set to "(All)" contributes the "*" wildcard (matches every category).
+    SLICER_ROW = 4                       # dropdowns sit on this row (Excel row 5)
+    DATE_ROW = 5                         # From/To date cells (Excel row 6)
+
+    def _slicer_cell(i, scope="local"):
+        col = 2 + i * 3                  # value cell column for slicer i
+        ref = f"${xl_col_to_name(col)}${SLICER_ROW + 1}"
+        return (f"Dashboard!{ref}" if scope == "full" else ref)
+
+    def _date_cell(which, scope="local"):
+        col = 2 if which == "from" else 5
+        ref = f"${xl_col_to_name(col)}${DATE_ROW + 1}"
+        return (f"Dashboard!{ref}" if scope == "full" else ref)
+
+    def crit_suffix(scope="local", include_date=True):
+        """Trailing COUNTIFS/SUMIFS criteria for all active slicers (+ date range).
+        Returns e.g. ',Data!$C$2:$C$9,IF($C$5="(All)","*",$C$5),Data!$K$2:$K$9,">="&$C$6'."""
+        parts = []
+        for i, col in enumerate(slicer_cols):
+            cell = _slicer_cell(i, scope)
+            parts.append(f'{col_range(col)},IF({cell}="(All)","*",{cell})')
+        if include_date and date_real_col:
+            dR = col_range(date_real_col)
+            parts.append(f'{dR},">="&{_date_cell("from", scope)}')
+            parts.append(f'{dR},"<="&{_date_cell("to", scope)}')
+        return ("," + ",".join(parts)) if parts else ""
+
+    has_filters = bool(slicer_cols) or bool(date_real_col)
 
     # ---------- ANALYSIS sheet (summary tables feed the charts) ---------- #
     ws_an = wb.add_worksheet("Analysis")
@@ -394,10 +437,12 @@ def build(job):
         fldR = col_range(field) if (field in df.columns) else None
         fmt_code = _fmt_code(bd.get("format") or ("money" if "salary" in str(field or "").lower() else "int"), currency)
         valfmt = num_format(fmt_code)
-        # Live when a selector exists and the agg is formula-expressible. The value
-        # cell references its own label in column A ($A<row>), so no category text
-        # is inlined (quote-safe) and the chart redraws when the dropdown changes.
-        live = bool(selector) and dimR is not None and agg in ("count", "sum", "mean")
+        # Live when filters exist and the agg is formula-expressible. The value cell
+        # references its own label in column A ($A<row>), so category text is never
+        # inlined (quote-safe), and every active slicer/date filter is AND-combined
+        # via crit_suffix() so the chart redraws when any filter changes.
+        live = has_filters and dimR is not None and agg in ("count", "sum", "mean")
+        sfx = crit_suffix("full")
         for _, r in tbl.iterrows():
             lab = str(r[dim_name])
             sval = float(r[meas_name])
@@ -406,24 +451,19 @@ def build(job):
             ws_an.write(an_row, 0, lab, f_cell)
             if live and lab != "Other":
                 if agg == "count":
-                    f = (f'=IF({SEL_FULL}="(All)",COUNTIF({dimR},{aref}),'
-                         f'COUNTIFS({dimR},{aref},{sel_range},{SEL_FULL}))')
+                    f = f'=COUNTIFS({dimR},{aref}{sfx})'
                 elif agg == "sum":
-                    f = (f'=IF({SEL_FULL}="(All)",SUMIFS({fldR},{dimR},{aref}),'
-                         f'SUMIFS({fldR},{dimR},{aref},{sel_range},{SEL_FULL}))')
+                    f = f'=SUMIFS({fldR},{dimR},{aref}{sfx})'
                 else:  # mean
-                    f = (f'=IF({SEL_FULL}="(All)",IFERROR(AVERAGEIFS({fldR},{dimR},{aref}),0),'
-                         f'IFERROR(AVERAGEIFS({fldR},{dimR},{aref},{sel_range},{SEL_FULL}),0))')
+                    f = f'=IFERROR(AVERAGEIFS({fldR},{dimR},{aref}{sfx}),0)'
                 ws_an.write_formula(an_row, 1, f, valfmt, sval)
             elif live and lab == "Other" and agg in ("count", "sum"):
                 # Residual = (total under the current filter) − (the shown rows above).
                 shown = f"$B${start + 1}:$B${excel_r - 1}"
                 if agg == "count":
-                    f = (f'=IF({SEL_FULL}="(All)",COUNTA({anchor_range})-SUM({shown}),'
-                         f'COUNTIF({sel_range},{SEL_FULL})-SUM({shown}))')
+                    f = f'=COUNTIFS({dimR},"*"{sfx})-SUM({shown})'
                 else:
-                    f = (f'=IF({SEL_FULL}="(All)",SUM({fldR})-SUM({shown}),'
-                         f'SUMIFS({fldR},{sel_range},{SEL_FULL})-SUM({shown}))')
+                    f = f'=SUMIFS({fldR},{dimR},"*"{sfx})-SUM({shown})'
                 ws_an.write_formula(an_row, 1, f, valfmt, sval)
             else:
                 ws_an.write_number(an_row, 1, sval, valfmt)
@@ -471,6 +511,7 @@ def build(job):
             ws_an.write(hdr, 1 + j, seg, f_hdr)
         an_row += 1
         ds = an_row
+        sfx = crit_suffix("full")
         for cat in cats:
             er = an_row + 1
             ws_an.write(an_row, 0, cat, f_cell)
@@ -480,19 +521,15 @@ def build(job):
                 colL = xl_col_to_name(1 + j)
                 segref = f"{colL}${hdr + 1}"
                 if agg == "count":
-                    base = f'COUNTIFS({byR},{aref},{stR},{segref})'
-                    filt = f'COUNTIFS({byR},{aref},{stR},{segref},{sel_range},{SEL_FULL})'
+                    f = f'=COUNTIFS({byR},{aref},{stR},{segref}{sfx})'
                     cached = float((sub[stackBy].astype(str) == seg).sum())
                 elif agg == "sum":
-                    base = f'SUMIFS({fR},{byR},{aref},{stR},{segref})'
-                    filt = f'SUMIFS({fR},{byR},{aref},{stR},{segref},{sel_range},{SEL_FULL})'
+                    f = f'=SUMIFS({fR},{byR},{aref},{stR},{segref}{sfx})'
                     cached = float(pd.to_numeric(sub[sub[stackBy].astype(str) == seg][field], errors="coerce").sum())
                 else:
-                    base = f'IFERROR(AVERAGEIFS({fR},{byR},{aref},{stR},{segref}),0)'
-                    filt = f'IFERROR(AVERAGEIFS({fR},{byR},{aref},{stR},{segref},{sel_range},{SEL_FULL}),0)'
+                    f = f'=IFERROR(AVERAGEIFS({fR},{byR},{aref},{stR},{segref}{sfx}),0)'
                     _s = pd.to_numeric(sub[sub[stackBy].astype(str) == seg][field], errors="coerce")
                     cached = float(_s.mean()) if _s.notna().any() else 0.0
-                f = f'=IF({SEL_FULL}="(All)",{base},{filt})' if selector else f'={base}'
                 ws_an.write_formula(an_row, 1 + j, f, vfmt, cached)
             an_row += 1
         de = an_row - 1
@@ -526,6 +563,8 @@ def build(job):
         ws_an.write(hrow, 2, cb.get("avgLabel") or f"Per employee", f_hdr)
         an_row += 1
         ds = an_row
+        # Slicers apply; the date range does not (the period axis already scopes time).
+        sfx = crit_suffix("full", include_date=False)
         for p in pers:
             er = an_row + 1
             ws_an.write(an_row, 0, p, f_cell)
@@ -534,11 +573,8 @@ def build(job):
             s = pd.to_numeric(sub[field], errors="coerce")
             cS = float(s.sum())
             cA = float(s.mean()) if s.notna().any() else 0.0
-            bsum, fsum = f'SUMIFS({fR},{per_range},{aref})', f'SUMIFS({fR},{per_range},{aref},{sel_range},{SEL_FULL})'
-            bavg = f'IFERROR(AVERAGEIFS({fR},{per_range},{aref}),0)'
-            favg = f'IFERROR(AVERAGEIFS({fR},{per_range},{aref},{sel_range},{SEL_FULL}),0)'
-            fS = f'=IF({SEL_FULL}="(All)",{bsum},{fsum})' if selector else f'={bsum}'
-            fA = f'=IF({SEL_FULL}="(All)",{bavg},{favg})' if selector else f'={bavg}'
+            fS = f'=SUMIFS({fR},{per_range},{aref}{sfx})'
+            fA = f'=IFERROR(AVERAGEIFS({fR},{per_range},{aref}{sfx}),0)'
             ws_an.write_formula(an_row, 1, fS, mfmt, cS)
             ws_an.write_formula(an_row, 2, fA, mfmt, cA)
             an_row += 1
@@ -802,17 +838,37 @@ def build(job):
     ws.set_row(1, 34)
     ws.set_row(2, 18)
 
-    # ---- Slicer (interactive dropdown at D5 = SEL cell) ----
-    SLICER_ROW = 4
-    if selector:
-        f_sl_lab = wb.add_format({**base_font, "font_size": 9, "bold": True, "font_color": "#FFFFFF", "bg_color": accent, "align": "center", "valign": "vcenter"})
-        f_sl_val = wb.add_format({**base_font, "font_size": 11, "bold": True, "font_color": primary, "bg_color": "#FFF8E6", "border": 1, "border_color": "#FFD98A", "align": "center", "valign": "vcenter"})
-        ws.merge_range(SLICER_ROW, 1, SLICER_ROW, 2, f"FILTER — {selector}".upper(), f_sl_lab)
-        ws.merge_range(SLICER_ROW, 3, SLICER_ROW, 4, "(All)", f_sl_val)      # D5:E5, top-left D5 == SEL_LOCAL
-        values = ["(All)"] + sorted(str(v) for v in df[selector].dropna().unique())[:200]
-        ws.data_validation(SLICER_ROW, 3, SLICER_ROW, 3, {"validate": "list", "source": values})
-        ws.write(SLICER_ROW, 5, "↳ pick a value — the cards and charts update live", f_note)
-        ws.set_row(SLICER_ROW, 22)
+    # ---- Filter bar: slicer dropdowns (row 5) + date range (row 6) + nav links ----
+    f_sl_lab = wb.add_format({**base_font, "font_size": 8, "bold": True, "font_color": "#FFFFFF", "bg_color": accent, "align": "center", "valign": "vcenter"})
+    f_sl_val = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": primary, "bg_color": "#FFF8E6", "border": 1, "border_color": "#FFD98A", "align": "center", "valign": "vcenter"})
+    for i, col in enumerate(slicer_cols):
+        lab_c, val_c = 1 + i * 3, 2 + i * 3
+        ws.write(SLICER_ROW, lab_c, col.upper()[:14], f_sl_lab)
+        ws.merge_range(SLICER_ROW, val_c, SLICER_ROW, val_c + 1, "(All)", f_sl_val)
+        values = ["(All)"] + sorted(str(v) for v in df[col].dropna().unique())[:200]
+        ws.data_validation(SLICER_ROW, val_c, SLICER_ROW, val_c, {"validate": "list", "source": values})
+    if slicer_cols:
+        ws.set_row(SLICER_ROW, 20)
+
+    if date_real_col:
+        f_dlab = wb.add_format({**base_font, "font_size": 8, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "align": "center", "valign": "vcenter"})
+        f_dval = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": primary, "num_format": "yyyy-mm-dd", "bg_color": "#EEF3FB", "border": 1, "border_color": "#C7D6EC", "align": "center", "valign": "vcenter"})
+        ws.write(DATE_ROW, 1, "FROM", f_dlab)
+        ws.merge_range(DATE_ROW, 2, DATE_ROW, 3, "", f_dval)
+        ws.write_datetime(DATE_ROW, 2, dt.datetime(date_min.year, date_min.month, date_min.day), f_dval)
+        ws.write(DATE_ROW, 4, "TO", f_dlab)
+        ws.merge_range(DATE_ROW, 5, DATE_ROW, 6, "", f_dval)
+        ws.write_datetime(DATE_ROW, 5, dt.datetime(date_max.year, date_max.month, date_max.day), f_dval)
+        ws.write(DATE_ROW, 7, "↳ set a date range", f_note)
+        ws.set_row(DATE_ROW, 18)
+
+    # Nav links (internal hyperlinks — app-like navigation, no macros).
+    f_nav = wb.add_format({**base_font, "font_size": 9, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "align": "center", "valign": "vcenter", "border": 1, "border_color": "#2B4A74"})
+    nav_c = 9
+    for lbl, sheet in [("▸ Data", "Data"), ("▸ Analysis", "Analysis")]:
+        ws.merge_range(DATE_ROW, nav_c, DATE_ROW, nav_c + 1, "", f_nav)
+        ws.write_url(DATE_ROW, nav_c, f"internal:{sheet}!A1", f_nav, lbl)
+        nav_c += 2
 
     # ---- KPI cards: big number (live) + vs-previous delta (▲/▼ %) ----
     kpis = (spec.get("kpis") or [{"label": "Total Records", "agg": "count"}])[:4]
@@ -822,26 +878,28 @@ def build(job):
     f_k_lab = wb.add_format({**base_font, "font_size": 9, "bold": True, "font_color": "#5B6B86", "bg_color": CARD_BG, "align": "left", "valign": "vcenter", "indent": 1})
 
     def _kpi_value_formula(kpi):
-        """Big-number formula that reacts to the dropdown, or None (→ static)."""
-        if not selector:
+        """Big-number formula that AND-combines every active filter, or None."""
+        if not has_filters:
             return None
         agg = (kpi.get("agg") or "count").lower()
         field = kpi.get("field")
         fR = col_range(field) if field in df.columns else None
+        sfx = crit_suffix("local")
+        if not sfx:
+            return None
         if agg == "count":
-            return f'=IF({SEL_LOCAL}="(All)",COUNTA({anchor_range}),COUNTIF({sel_range},{SEL_LOCAL}))'
+            return f'=COUNTIFS({sfx[1:]})'
         if agg in ("sum", "mean") and fR:
-            fn, fns = ("SUM", "SUMIFS") if agg == "sum" else ("AVERAGE", "AVERAGEIFS")
-            return f'=IFERROR(IF({SEL_LOCAL}="(All)",{fn}({fR}),{fns}({fR},{sel_range},{SEL_LOCAL})),0)'
+            fn = "SUMIFS" if agg == "sum" else "AVERAGEIFS"
+            return f'=IFERROR({fn}({fR}{sfx}),0)'
         if agg == "ratio" and fR:
             m = kpi.get("match")
-            return (f'=IFERROR(IF({SEL_LOCAL}="(All)",COUNTIF({fR},"{m}")/COUNTA({fR}),'
-                    f'COUNTIFS({fR},"{m}",{sel_range},{SEL_LOCAL})/COUNTIFS({sel_range},{SEL_LOCAL})),0)')
+            return f'=IFERROR(COUNTIFS({fR},"{m}"{sfx})/COUNTIFS({sfx[1:]}),0)'
         return None
 
     def _kpi_period_exprs(kpi):
         """(current, previous) period sub-expressions for the delta, or None.
-        Reacts to the dropdown too when a selector exists."""
+        Slicers apply; the date range does not (the period scopes time itself)."""
         if not period_col:
             return None
         agg = (kpi.get("agg") or "count").lower()
@@ -851,18 +909,14 @@ def build(job):
         fR = col_range(field) if field in df.columns else None
         if agg in ("sum", "mean") and not fR:
             return None
+        sfx = crit_suffix("local", include_date=False)
 
         def expr(pv):
             if agg == "count":
-                base = f'COUNTIF({per_range},"{pv}")'
-                filt = f'COUNTIFS({per_range},"{pv}",{sel_range},{SEL_LOCAL})'
-            elif agg == "sum":
-                base = f'SUMIFS({fR},{per_range},"{pv}")'
-                filt = f'SUMIFS({fR},{per_range},"{pv}",{sel_range},{SEL_LOCAL})'
-            else:  # mean
-                base = f'IFERROR(AVERAGEIFS({fR},{per_range},"{pv}"),0)'
-                filt = f'IFERROR(AVERAGEIFS({fR},{per_range},"{pv}",{sel_range},{SEL_LOCAL}),0)'
-            return f'IF({SEL_LOCAL}="(All)",{base},{filt})' if selector else base
+                return f'COUNTIFS({per_range},"{pv}"{sfx})'
+            if agg == "sum":
+                return f'SUMIFS({fR},{per_range},"{pv}"{sfx})'
+            return f'IFERROR(AVERAGEIFS({fR},{per_range},"{pv}"{sfx}),0)'
 
         return expr(latest_period), expr(prev_period)
 
@@ -975,12 +1029,9 @@ def build(job):
             subm = g[g[by].astype(str) == cat][field]
             cavg = float(subm.mean()) if subm.notna().any() else 0.0
             labref = xl_rowcol_to_cell(rr, c0)                 # the label cell, e.g. "H23"
-            if selector:
-                ftot = f'=IF({SEL_LOCAL}="(All)",SUMIFS({fR},{byR},{labref}),SUMIFS({fR},{byR},{labref},{sel_range},{SEL_LOCAL}))'
-                favg = f'=IF({SEL_LOCAL}="(All)",IFERROR(AVERAGEIFS({fR},{byR},{labref}),0),IFERROR(AVERAGEIFS({fR},{byR},{labref},{sel_range},{SEL_LOCAL}),0))'
-            else:
-                ftot = f'=SUMIFS({fR},{byR},{labref})'
-                favg = f'=IFERROR(AVERAGEIFS({fR},{byR},{labref}),0)'
+            sfx = crit_suffix("local")
+            ftot = f'=SUMIFS({fR},{byR},{labref}{sfx})'
+            favg = f'=IFERROR(AVERAGEIFS({fR},{byR},{labref}{sfx}),0)'
             ws.merge_range(rr, c0, rr, c0 + 2, cat, labf)
             ws.merge_range(rr, c0 + 3, rr, c0 + 4, "", totf)
             ws.write_formula(rr, c0 + 3, ftot, totf, subtot)

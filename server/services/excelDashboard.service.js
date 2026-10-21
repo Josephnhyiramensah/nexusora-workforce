@@ -94,7 +94,7 @@ async function specFromPrompt({ prompt, schema, title, brand, currency }) {
     '{',
     '  "title": string,',
     '  "subtitle": string,',
-    '  "selector": <a category column to use as the interactive filter, or omit>,',
+    '  "selectors": [ <1–4 category columns for the slicer bar, e.g. department, location, tier> ],',
     '  "derived": [ { "name": string, "from": <number column>, "type": "bucket", "bins": [numbers], "labels": [strings] } ],',
     '  "kpis": [ { "label": string, "agg": "count"|"sum"|"mean"|"ratio"|"distinct", "field": <number or category column, if needed>, "match": <value, only for ratio>, "format": "int"|"float"|"money"|"pct" } ],',
     '  "breakdowns": [ { "title": string, "by": <category column>, "agg": "count"|"sum"|"mean", "field": <number column, for sum/mean>, "chart": "column"|"bar"|"pie"|"line", "format": "int"|"money"|"float", "top": number } ],',
@@ -102,7 +102,7 @@ async function specFromPrompt({ prompt, schema, title, brand, currency }) {
     '  "combo": { "title": string, "field": <number column, e.g. a cost>, "sumLabel": string, "avgLabel": string },',
     '  "statusTable": { "title": string, "by": <category column>, "field": <number column, e.g. a cost>, "sumLabel": string, "avgLabel": string, "top": number }',
     '}',
-    'Guidance: 3–5 KPIs (headcount/count, averages, totals, and a ratio like attrition if a status column exists). 3–6 breakdowns across the most insightful dimensions. Pick a sensible selector (e.g. department). Use "money" format for salary/pay fields. Add a derived age/tenure band if an age or tenure number column exists. Keep titles short and human.',
+    'Guidance: 3–5 KPIs (headcount/count, averages, totals, and a ratio like attrition if a status column exists). 3–6 breakdowns across the most insightful dimensions. Pick 1–3 sensible slicers for "selectors" (e.g. department, location, tier) — they AND together. Use "money" format for salary/pay fields. Add a derived age/tenure band if an age or tenure number column exists. Keep titles short and human.',
     'Add ONE "stacked" when two meaningful low-cardinality categories exist (e.g. status by employee tier). Add a "combo" dual-axis trend over time for the main money field (total as columns + per-employee mean as a line) — only meaningful when a date column exists. Add a "statusTable" for a money field by a key category (e.g. training cost by department), which renders with red/amber/green indicator dots. Omit any you can\'t ground in real columns.',
     '',
     `CATEGORY columns: ${JSON.stringify(categories)}`,
@@ -137,8 +137,18 @@ function sanitizeSpec(spec, schema, { title, brand, currency }) {
   // Pass through an AI narrative (adds the "AI Insights" sheet) when present.
   if (spec.narrative && typeof spec.narrative === 'object') out.narrative = spec.narrative;
 
-  // selector
+  // selector (single, legacy) + selectors (multi slicer bar)
   out.selector = (spec.selector && isCat(spec.selector)) ? spec.selector : (cats[0] || undefined);
+  // Slicer dimensions: what the model asked for (valid, low-cardinality cats),
+  // else a sensible 1–3 picked from the data so the filter bar is useful.
+  const slicerPool = schema.filter((c) => c.type === 'category' && c.distinct > 1 && c.distinct <= 30).map((c) => c.name);
+  let selectors = Array.isArray(spec.selectors) ? spec.selectors.filter((s) => slicerPool.includes(s)) : [];
+  const modelAsked = selectors.length > 0;
+  if (!selectors.length && out.selector) selectors = [out.selector];
+  // Only auto-pad the slicer bar when the model didn't choose for itself.
+  if (!modelAsked) { for (const c of slicerPool) { if (selectors.length >= 3) break; if (!selectors.includes(c)) selectors.push(c); } }
+  out.selectors = Array.from(new Set(selectors)).slice(0, 4);
+  if (!out.selector && out.selectors.length) out.selector = out.selectors[0];
 
   // derived (only bucket over a number column)
   out.derived = Array.isArray(spec.derived) ? spec.derived.filter((d) => d && d.name && isNum(d.from) && Array.isArray(d.bins)) : [];
