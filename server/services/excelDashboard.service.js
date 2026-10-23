@@ -18,6 +18,10 @@ const GEN_TIMEOUT_MS = Number(process.env.XLSX_TIMEOUT_MS || 120000);
 const AGGS = ['count', 'sum', 'mean', 'ratio', 'distinct'];
 const CHARTS = ['column', 'bar', 'pie', 'line'];
 const FORMATS = ['int', 'float', 'money', 'pct'];
+const ICONS = ['people', 'money', 'percent', 'grid', 'trend'];
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+// Status/exit vocabulary → detect an attrition-style column and its "exited" value.
+const EXIT_VALUES = ['terminated', 'exited', 'resigned', 'left', 'inactive', 'separated'];
 
 // Turn a raw Python failure into a clean, actionable message instead of dumping
 // a multi-line traceback into the UI. A missing dependency is the common one
@@ -96,14 +100,17 @@ async function specFromPrompt({ prompt, schema, title, brand, currency }) {
     '  "subtitle": string,',
     '  "selectors": [ <1–4 category columns for the slicer bar, e.g. department, location, tier> ],',
     '  "derived": [ { "name": string, "from": <number column>, "type": "bucket", "bins": [numbers], "labels": [strings] } ],',
-    '  "kpis": [ { "label": string, "agg": "count"|"sum"|"mean"|"ratio"|"distinct", "field": <number or category column, if needed>, "match": <value, only for ratio>, "format": "int"|"float"|"money"|"pct" } ],',
+    '  "kpis": [ { "label": string, "agg": "count"|"sum"|"mean"|"ratio"|"distinct", "field": <number or category column, if needed>, "match": <value, only for ratio>, "format": "int"|"float"|"money"|"pct", "icon": "people"|"money"|"percent"|"grid"|"trend" } ],',
     '  "breakdowns": [ { "title": string, "by": <category column>, "agg": "count"|"sum"|"mean", "field": <number column, for sum/mean>, "chart": "column"|"bar"|"pie"|"line", "format": "int"|"money"|"float", "top": number } ],',
+    '  "gauges": [ { "title": string, "agg": "ratio"|"count"|"sum"|"mean", "field": <column, if needed>, "match": <value, only for ratio>, "max": <number target the gauge fills toward; omit for ratios (=1)>, "format": "pct"|"int"|"money", "bands": [ { "upto": number, "color": "#RRGGBB" } ] } ],',
+    '  "funnel": { "title": string, "by": <category column whose values are the stages>, "agg": "count"|"sum"|"mean", "field": <number column, for sum/mean>, "top": number, "stages": [ <optional explicit stage order> ] },',
+    '  "pyramid": { "title": string, "by": <category column, e.g. job level>, "agg": "count"|"sum", "top": number, "order": [ <optional level order, base first> ] },',
     '  "stacked": [ { "title": string, "by": <category column, the axis>, "stackBy": <a DIFFERENT category column, the segments>, "agg": "count"|"sum"|"mean", "field": <number column, for sum/mean>, "chart": "column"|"bar" } ],',
     '  "combo": { "title": string, "field": <number column, e.g. a cost>, "sumLabel": string, "avgLabel": string },',
     '  "statusTable": { "title": string, "by": <category column>, "field": <number column, e.g. a cost>, "sumLabel": string, "avgLabel": string, "top": number }',
     '}',
     'Guidance: 3–5 KPIs (headcount/count, averages, totals, and a ratio like attrition if a status column exists). 3–6 breakdowns across the most insightful dimensions. Pick 1–3 sensible slicers for "selectors" (e.g. department, location, tier) — they AND together. Use "money" format for salary/pay fields. Add a derived age/tenure band if an age or tenure number column exists. Keep titles short and human.',
-    'Add ONE "stacked" when two meaningful low-cardinality categories exist (e.g. status by employee tier). Add a "combo" dual-axis trend over time for the main money field (total as columns + per-employee mean as a line) — only meaningful when a date column exists. Add a "statusTable" for a money field by a key category (e.g. training cost by department), which renders with red/amber/green indicator dots. Omit any you can\'t ground in real columns.',
+    'Add 1–4 "gauges" for the headline ratios — e.g. attrition % (ratio on a status column, match the exited value), active %, or a mean/sum against a "max" target. Give an attrition-style gauge "bands" that go green→amber→red as the value rises (low attrition is good); invert for a "good when high" ratio. Add a "funnel" when one category reads as a process or a set of stages (recruitment stage, headcount by level), and a "pyramid" for a level/grade mix shown as shares (base = most junior). Add ONE "stacked" when two meaningful low-cardinality categories exist (e.g. status by employee tier). Add a "combo" dual-axis trend over time for the main money field (total as columns + per-employee mean as a line) — only meaningful when a date column exists. Add a "statusTable" for a money field by a key category (e.g. training cost by department), which renders with red/amber/green indicator dots. Omit any you can\'t ground in real columns.',
     '',
     `CATEGORY columns: ${JSON.stringify(categories)}`,
     `NUMBER columns: ${JSON.stringify(numbers)}`,
@@ -159,7 +166,8 @@ function sanitizeSpec(spec, schema, { title, brand, currency }) {
   let kpis = Array.isArray(spec.kpis) ? spec.kpis : [];
   kpis = kpis.filter((k) => k && AGGS.includes(k.agg) && (k.agg === 'count' || isNum(k.field) || (k.agg === 'ratio' && byName[k.field]) || (k.agg === 'distinct' && byName[k.field])))
     .map((k) => ({ label: String(k.label || k.agg), agg: k.agg, field: k.field, match: k.match,
-      format: FORMATS.includes(k.format) ? k.format : (k.agg === 'ratio' ? 'pct' : (/salary|pay|wage|cost|amount/i.test(k.field || '') ? 'money' : 'int')) }))
+      format: FORMATS.includes(k.format) ? k.format : (k.agg === 'ratio' ? 'pct' : (/salary|pay|wage|cost|amount/i.test(k.field || '') ? 'money' : 'int')),
+      ...(ICONS.includes(k.icon) ? { icon: k.icon } : {}) }))
     .slice(0, 4);
   if (!kpis.length) {
     kpis = [{ label: 'Headcount', agg: 'count', format: 'int' }];
@@ -224,6 +232,67 @@ function sanitizeSpec(spec, schema, { title, brand, currency }) {
   } else if (moneyNum && cats[0]) {
     out.statusTable = { title: `${moneyNum} by ${cats[0]}`, by: cats[0], field: moneyNum,
       format: moneyRe.test(moneyNum) ? 'money' : 'float', top: 6 };
+  }
+
+  // --- Phase 4 visuals: gauges, funnel, pyramid ---
+  // Gauges: validate what the model asked for; else default to the headline HR
+  // ratios (attrition %, active share) when a status column exists.
+  const validGauge = (g) => g && typeof g === 'object'
+    && AGGS.includes(g.agg || 'ratio')
+    && ((g.agg || 'ratio') === 'count' || byName[g.field]);
+  out.gauges = (Array.isArray(spec.gauges) ? spec.gauges : [])
+    .filter(validGauge)
+    .map((g) => {
+      const agg = g.agg || 'ratio';
+      const bands = Array.isArray(g.bands)
+        ? g.bands.filter((b) => b && Number.isFinite(Number(b.upto)) && HEX_RE.test(b.color || ''))
+          .map((b) => ({ upto: Number(b.upto), color: b.color }))
+        : undefined;
+      return {
+        title: String(g.title || g.label || agg), agg, field: g.field, match: g.match,
+        ...(Number.isFinite(Number(g.max)) ? { max: Number(g.max) } : {}),
+        format: FORMATS.includes(g.format) ? g.format : (agg === 'ratio' ? 'pct' : (/salary|pay|wage|cost/i.test(g.field || '') ? 'money' : 'int')),
+        ...(bands && bands.length ? { bands } : {}),
+      };
+    })
+    .slice(0, 4);
+  if (!out.gauges.length) {
+    const statusCol = schema.find((c) => c.type === 'category' && /status|employment|state/i.test(c.name));
+    if (statusCol) {
+      const lowSamples = (statusCol.samples || []).map((s) => String(s).toLowerCase());
+      const exit = EXIT_VALUES.find((v) => lowSamples.some((s) => s.includes(v)));
+      const activeVal = (statusCol.samples || []).map(String).find((s) => /active|employed|current|present/i.test(s));
+      if (exit) {
+        out.gauges = [{ title: 'Attrition %', agg: 'ratio', field: statusCol.name, match: exit, format: 'pct',
+          bands: [{ upto: 0.10, color: '#1F9D57' }, { upto: 0.20, color: '#C77700' }, { upto: 1, color: '#E5484D' }] }];
+        if (activeVal) out.gauges.push({ title: 'Active share', agg: 'ratio', field: statusCol.name, match: activeVal, format: 'pct',
+          bands: [{ upto: 0.60, color: '#E5484D' }, { upto: 0.80, color: '#C77700' }, { upto: 1, color: '#1F9D57' }] });
+      }
+    }
+  }
+
+  // Funnel: validate; else default only from a genuine stage/pipeline column so
+  // it never duplicates the pyramid.
+  if (spec.funnel && isCat(spec.funnel.by) && ['count', 'sum', 'mean'].includes(spec.funnel.agg || 'count')) {
+    const f = spec.funnel;
+    const agg = f.agg || 'count';
+    const field = (agg === 'sum' || agg === 'mean') && isNum(f.field) ? f.field : undefined;
+    out.funnel = { title: String(f.title || `${f.by} funnel`), by: f.by, agg: field ? agg : 'count', field,
+      top: Number.isInteger(f.top) ? f.top : 8, ...(Array.isArray(f.stages) ? { stages: f.stages.map(String) } : {}) };
+  } else {
+    const stageCol = schema.find((c) => c.type === 'category' && c.distinct >= 3 && c.distinct <= 10 && /stage|pipeline|funnel|phase|step/i.test(c.name));
+    if (stageCol) out.funnel = { title: `${stageCol.name} funnel`, by: stageCol.name, agg: 'count', top: 8 };
+  }
+
+  // Pyramid: validate; else default from a level/grade/seniority column as a share mix.
+  if (spec.pyramid && isCat(spec.pyramid.by)) {
+    const p = spec.pyramid;
+    const field = p.agg === 'sum' && isNum(p.field) ? p.field : undefined;
+    out.pyramid = { title: String(p.title || `${p.by} mix`), by: p.by, agg: field ? 'sum' : 'count', field,
+      top: Number.isInteger(p.top) ? p.top : 8, ...(Array.isArray(p.order) ? { order: p.order.map(String) } : {}) };
+  } else {
+    const levelCol = schema.find((c) => c.type === 'category' && c.distinct >= 2 && c.distinct <= 10 && /level|grade|band|seniority|rank|tier/i.test(c.name));
+    if (levelCol) out.pyramid = { title: `${levelCol.name} mix (%)`, by: levelCol.name, agg: 'count', top: 8 };
   }
 
   return out;
