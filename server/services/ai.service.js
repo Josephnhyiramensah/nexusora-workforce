@@ -19,6 +19,12 @@ const PROVIDER = (process.env.AI_PROVIDER || 'anthropic').toLowerCase();
 // if this returns 404, set AI_MODEL to a current id from your Anthropic account.
 const MODEL = process.env.AI_MODEL || 'claude-sonnet-5';
 const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 60000);
+// Extended thinking ("effort"): when AI_THINKING_BUDGET is a positive token count,
+// the model reasons before answering — materially better analytical design for the
+// dashboard spec. 0/unset keeps the single-pass behaviour (no cost change). A good
+// starting point is 2000–4000; the model must be a thinking-capable one (Opus/Sonnet
+// current gen). Response thinking blocks are already stripped below.
+const THINKING_BUDGET = Math.max(0, Number(process.env.AI_THINKING_BUDGET || 0));
 
 function isConfigured() {
   if (PROVIDER === 'anthropic') return !!process.env.ANTHROPIC_API_KEY;
@@ -44,7 +50,13 @@ async function anthropicComplete({ system, messages, maxTokens, temperature }) {
   // reasoning models (Opus 5 / 4.8, Sonnet 5) use adaptive thinking and reject a custom
   // temperature with a 400. Leaving it off uses the model's default and works everywhere.
   const body = { model: MODEL, max_tokens: maxTokens, system, messages };
-  if (String(process.env.AI_SEND_TEMPERATURE || '').toLowerCase() === 'true' && temperature != null) {
+  if (THINKING_BUDGET > 0) {
+    // Extended thinking. max_tokens must exceed the thinking budget (the budget is
+    // spent on reasoning, and the visible answer needs headroom beyond it). A custom
+    // temperature is not allowed alongside thinking, so it is never sent here.
+    body.thinking = { type: 'enabled', budget_tokens: THINKING_BUDGET };
+    if (body.max_tokens <= THINKING_BUDGET) body.max_tokens = THINKING_BUDGET + 1536;
+  } else if (String(process.env.AI_SEND_TEMPERATURE || '').toLowerCase() === 'true' && temperature != null) {
     body.temperature = temperature;
   }
 
