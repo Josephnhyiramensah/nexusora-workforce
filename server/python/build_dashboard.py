@@ -418,11 +418,34 @@ def build(job):
             ws.write_blank(r0 + 1, cc, None, bg)
         ws.set_row(r0 + 1, 30)
 
-    # ---------- DATA sheet (Excel Table, filterable) ---------- #
-    ws_data = wb.add_worksheet("Data")
+    # ---------- ONE VISIBLE SHEET: create it up front ---------- #
+    # The whole board — filter panel, KPIs, gauges, charts AND the editable data
+    # table — lives on a single "Dashboard" sheet, matching the client's sample
+    # boards. Helper aggregation tables sit on a veryHidden "Analysis" sheet the
+    # user never sees. The editable table is placed below the canvas at DATA_R0,
+    # computed from an upper bound of the tile count so it can never overlap the
+    # charts (a shorter canvas just leaves a small gap).
+    ws = wb.add_worksheet("Dashboard")
+    ws.hide_gridlines(2)
+    ws.set_column("A:A", 2)
     ncols = len(df.columns)
     nrows = len(df)
-    # Choose per-column number formats.
+    for _c in range(1, max(14, ncols + 2)):
+        ws.set_column(_c, _c, 14)
+    ws_tr = ws_rt = None   # optional deep-dive sheets (hidden if built)
+
+    _n_tiles = (len(spec.get("breakdowns") or []) + len(spec.get("stacked") or [])
+                + (1 if spec.get("combo") else 0) + (1 if spec.get("funnel") else 0)
+                + (1 if spec.get("pyramid") else 0) + (1 if spec.get("statusTable") else 0))
+    _tile_rows = max(1, -(-_n_tiles // 2))
+    _gauge_band = 13 if spec.get("gauges") else 0
+    _charts_start_est = 8 + 2 + _gauge_band           # KPI_DLT(8) + 2 + gauge band
+    DATA_C0 = 1                                        # data starts at column B (A is the margin)
+    DATA_R0 = (_charts_start_est + 1) + _tile_rows * 16 + 6   # 0-based header row of the editable table
+    DATA_BODY = DATA_R0 + 2                            # 1-based Excel row where data values begin
+
+    # ---------- EDITABLE DATA TABLE (same sheet, below the canvas) ---------- #
+    ws_data = ws
     date_cols = {date_real_col} if date_real_col else set()
     date_cell_fmt = wb.add_format({**base_font, "font_size": 10, "num_format": "yyyy-mm-dd", "border": 1, "border_color": "#E3EAF5"})
     col_meta = []
@@ -436,58 +459,43 @@ def build(job):
         else:
             code = None
         col_meta.append(code)
-        if col in date_cols:
-            ws_data.set_column(ci, ci, 13, date_cell_fmt)
-        else:
-            ws_data.set_column(ci, ci, max(12, min(32, int(s.astype(str).str.len().clip(upper=40).max() if nrows else 12) + 2)),
-                               num_format(code) if code else wb.add_format({**base_font, "font_size": 10}))
 
-    # Write rows via table.
+    # Section banner just above the table.
+    f_data_h = wb.add_format({**base_font, "font_size": 12, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "valign": "vcenter", "indent": 1})
+    ws.merge_range(DATA_R0 - 2, 1, DATA_R0 - 2, max(2, min(ncols, 12)),
+                   "YOUR DATA  —  edit cells, add rows at the bottom, or delete rows; the dashboard above updates live", f_data_h)
+    ws.set_row(DATA_R0 - 2, 22)
+
+    # Write the table body at the DATA_R0 offset (add_table writes the header row).
     table_cols = [{"header": str(c), "header_format": f_hdr} for c in df.columns]
-    # Fill cells (xlsxwriter add_table writes the header; we write the body).
     for ci, col in enumerate(df.columns):
         is_date = col in date_cols
+        cc = DATA_C0 + ci
         for ri in range(nrows):
             v = df.iat[ri, ci]
+            rr = DATA_R0 + 1 + ri
             if pd.isna(v):
-                ws_data.write_blank(ri + 1, ci, None, f_cell)
+                ws_data.write_blank(rr, cc, None, f_cell)
             elif is_date:
-                ws_data.write_datetime(ri + 1, ci, dt.datetime(v.year, v.month, v.day), date_cell_fmt)
+                ws_data.write_datetime(rr, cc, dt.datetime(v.year, v.month, v.day), date_cell_fmt)
             elif col_meta[ci]:
-                ws_data.write_number(ri + 1, ci, float(v), num_format(col_meta[ci]))
+                ws_data.write_number(rr, cc, float(v), num_format(col_meta[ci]))
             else:
-                ws_data.write(ri + 1, ci, (v.item() if hasattr(v, "item") else v), f_cell)
+                ws_data.write(rr, cc, (v.item() if hasattr(v, "item") else v), f_cell)
     last_row = max(1, nrows)
-    ws_data.add_table(0, 0, last_row, ncols - 1,
+    ws_data.add_table(DATA_R0, DATA_C0, DATA_R0 + last_row, DATA_C0 + ncols - 1,
                       {"columns": table_cols, "name": "DataTbl", "style": "Table Style Medium 2",
                        "autofilter": True, "header_row": True})
-    ws_data.freeze_panes(1, 0)
-    # This sheet is the live entry surface: a short banner to the right of the
-    # table tells users they can edit it directly and the Dashboard follows.
-    note_c = ncols + 1
-    f_entry_h = wb.add_format({**base_font, "font_size": 11, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "valign": "vcenter", "indent": 1})
-    f_entry_b = wb.add_format({**base_font, "font_size": 9, "font_color": "#16233b", "text_wrap": True, "valign": "top", "bg_color": "#F1F6FD", "border": 1, "border_color": "#E3EAF5"})
-    ws_data.set_column(note_c, note_c, 2)
-    ws_data.set_column(note_c + 1, note_c + 1, 40)
-    ws_data.write(0, note_c + 1, "This is your live data", f_entry_h)
-    ws_data.merge_range(1, note_c + 1, 4, note_c + 1,
-                        "Add a row at the bottom, edit any cell, or delete a row — the Dashboard's "
-                        "KPIs, gauges and charts recalculate automatically. Keep the column headers as "
-                        "they are so the formulas keep matching.", f_entry_b)
 
     def col_range(col):
-        """A1 range for a data column that AUTO-EXPANDS: Data!$C$2:$C$1048576.
-
-        Starts at row 2 (so the header text is never in the range) and runs to
-        the last Excel row. Every live formula (KPIs, charts, gauges, funnel,
-        pyramid, tables) is built from these ranges, so rows the user ADDS,
-        EDITS or DELETES in the Data table recompute the whole board — no
-        regeneration needed. Header-safe: "Department" never matches a category,
-        a "*" wildcard (text only, header excluded by the row-2 start), or a
-        numeric date criterion; blank trailing rows match nothing and sum to 0."""
+        """Auto-expanding A1 range for a data column on the Dashboard sheet, e.g.
+        Dashboard!$C$92:$C$1048576. Starts at the table's first body row (so the
+        header text is never in the range) and runs to the last Excel row, so rows
+        the user ADDS, EDITS or DELETES recompute the whole board live. Canvas
+        content above DATA_BODY in the same column is excluded by the start row."""
         ci = list(df.columns).index(col)
-        letter = xl_col_to_name(ci)
-        return f"Data!${letter}$2:${letter}${MAX_DATA_ROW}"
+        letter = xl_col_to_name(DATA_C0 + ci)
+        return f"Dashboard!${letter}${DATA_BODY}:${letter}${MAX_DATA_ROW}"
 
     per_range = col_range(period_col) if period_col else None
 
@@ -1144,12 +1152,7 @@ def build(job):
             ws_rt.write(hdr_r + rows_written + 2, 0, "“Retention” = share of each hire-year cohort still active now (snapshot), not a full survival curve.", f_note)
             extra_sheets.append("Retention")
 
-    # ---------- DASHBOARD sheet ---------- #
-    ws = wb.add_worksheet("Dashboard")
-    ws.hide_gridlines(2)
-    ws.set_column("A:A", 2)
-    for c in range(1, 13):
-        ws.set_column(c, c, 11)
+    # ---------- DASHBOARD CANVAS (same sheet, above the data table) ---------- #
     charts_added = 0
 
     # Title band (two stacked merged rows — no overlapping ranges)
@@ -1181,14 +1184,6 @@ def build(job):
         ws.write_datetime(DATE_ROW, 5, dt.datetime(date_max.year, date_max.month, date_max.day), f_dval)
         ws.write(DATE_ROW, 7, "↳ set a date range", f_note)
         ws.set_row(DATE_ROW, 18)
-
-    # Nav links (internal hyperlinks — app-like navigation, no macros).
-    f_nav = wb.add_format({**base_font, "font_size": 9, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "align": "center", "valign": "vcenter", "border": 1, "border_color": "#2B4A74"})
-    nav_c = 9
-    for lbl, sheet in [("▸ Data", "Data"), ("▸ Analysis", "Analysis")]:
-        ws.merge_range(DATE_ROW, nav_c, DATE_ROW, nav_c + 1, "", f_nav)
-        ws.write_url(DATE_ROW, nav_c, f"internal:{sheet}!A1", f_nav, lbl)
-        nav_c += 2
 
     # ---- KPI cards: big number (live) + vs-previous delta (▲/▼ %) ----
     kpis = (spec.get("kpis") or [{"label": "Total Records", "agg": "count"}])[:4]
@@ -1543,14 +1538,23 @@ def build(job):
                  lambda x: (f"{x.get('action', '')} — {x.get('rationale', '')}".strip(" —") if isinstance(x, dict) else str(x)))
         _line("Generated by AI from this dashboard's figures. Review before acting on it.", f_note)
 
-    ws.set_first_sheet()
+    # Collapse to ONE visible sheet: the user sees only the Dashboard (with its
+    # editable data table on it). The formula engine is veryHidden (protected);
+    # the optional deep-dive analyses are hidden (right-click a tab → Unhide to
+    # reach them). This matches the client's single-page sample boards.
     ws.activate()
+    ws.set_first_sheet()
+    ws_an.very_hidden()
+    for _x in (ws_corr, ws_piv, ws_tr, ws_rt):
+        if _x is not None:
+            _x.hide()
     wb.close()
 
     return {
         "ok": True,
         "output": out_path,
-        "sheets": ["Dashboard", "Data", "Analysis"] + extra_sheets + (["AI Insights"] if has_narr else []),
+        "sheets": ["Dashboard"],
+        "hidden_sheets": ["Analysis"] + extra_sheets,
         "rows": int(nrows),
         "charts": charts_added,
         "warnings": warnings,
