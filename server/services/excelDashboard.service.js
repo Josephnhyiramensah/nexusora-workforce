@@ -112,6 +112,12 @@ async function specFromPrompt({ prompt, schema, title, brand, currency }) {
     'Guidance: 3–5 KPIs (headcount/count, averages, totals, and a ratio like attrition if a status column exists). 3–6 breakdowns across the most insightful dimensions. Pick 1–3 sensible slicers for "selectors" (e.g. department, location, tier) — they AND together. Use "money" format for salary/pay fields. Add a derived age/tenure band if an age or tenure number column exists. Keep titles short and human.',
     'Add 1–4 "gauges" for the headline ratios — e.g. attrition % (ratio on a status column, match the exited value), active %, or a mean/sum against a "max" target. Give an attrition-style gauge "bands" that go green→amber→red as the value rises (low attrition is good); invert for a "good when high" ratio. Add a "funnel" when one category reads as a process or a set of stages (recruitment stage, headcount by level), and a "pyramid" for a level/grade mix shown as shares (base = most junior). Add ONE "stacked" when two meaningful low-cardinality categories exist (e.g. status by employee tier). Add a "combo" dual-axis trend over time for the main money field (total as columns + per-employee mean as a line) — only meaningful when a date column exists. Add a "statusTable" for a money field by a key category (e.g. training cost by department), which renders with red/amber/green indicator dots. Omit any you can\'t ground in real columns.',
     '',
+    'QUALITY BAR — design like a senior people-analytics lead, not a basic export. A plain table or a single pie chart is a FAIL. A strong board tells the headcount, retention, cost and composition story at a glance:',
+    '- Lead with the decisions an HR director makes: who is leaving (attrition %, by tenure/department/level), what the workforce costs (total + average pay, by department/grade), who the workforce IS (headcount, gender/age/level mix), and where it is heading (trend over time, hire cohorts).',
+    '- Prefer the richer visual when the data supports it: a gauge for a headline ratio over a KPI number; a funnel/pyramid for stage or level composition over a flat bar; a stacked crosstab to expose a split (e.g. attrition by department × gender); a combo trend when a date exists. Fill the board — aim for the full set of KPIs, 2–4 gauges, a funnel AND a pyramid where levels/stages exist, several breakdowns, a stacked view, a trend, and a status table — not the bare minimum.',
+    '- Every pick must answer a real HR question and be grounded in an actual column. Derive age/tenure BANDS from a raw age/tenure number so they read as categories. Choose the attrition "match" value from the status column\'s real samples (terminated/resigned/exited/inactive).',
+    'Be thorough: use the columns you are given to their fullest. If the data clearly supports a more insightful cut than the examples above, design it. The goal is to EXCEED a hand-built sample board, not merely match one.',
+    '',
     `CATEGORY columns: ${JSON.stringify(categories)}`,
     `NUMBER columns: ${JSON.stringify(numbers)}`,
     `FULL SCHEMA: ${JSON.stringify(schema)}`,
@@ -120,7 +126,9 @@ async function specFromPrompt({ prompt, schema, title, brand, currency }) {
     ? prompt.trim()
     : 'Design the most insightful professional HR analytics dashboard for this dataset.';
   let spec = {};
-  try { spec = await ai.completeJSON({ system, messages: [{ role: 'user', content: user }], maxTokens: 1600 }); }
+  // Generous budget so a rich spec (all chart types + narrative) never truncates;
+  // with extended thinking enabled the client lifts max_tokens above the think budget.
+  try { spec = await ai.completeJSON({ system, messages: [{ role: 'user', content: user }], maxTokens: 4000 }); }
   catch (e) { spec = {}; }
   return sanitizeSpec(spec, schema, { title, brand, currency });
 }
