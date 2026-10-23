@@ -356,6 +356,7 @@ def build(job):
     period_col = latest_period = prev_period = None
     date_real_col = date_min = date_max = None
     _pcol, _pser = _detect_dates(df)
+    src_date_col = _pcol          # the user's own date column that Period/Date derive from
     if _pcol is not None:
         try:
             _per = _pser.dt.to_period("M").astype(str)
@@ -446,55 +447,92 @@ def build(job):
 
     # ---------- EDITABLE DATA TABLE (same sheet, below the canvas) ---------- #
     ws_data = ws
-    date_cols = {date_real_col} if date_real_col else set()
     date_cell_fmt = wb.add_format({**base_font, "font_size": 10, "num_format": "yyyy-mm-dd", "border": 1, "border_color": "#E3EAF5"})
-    col_meta = []
-    for ci, col in enumerate(df.columns):
+
+    # The engine-derived Period/Date columns are needed by the date filter, the
+    # combo trend and the period deltas, but they are internal — the user never
+    # edits them. Keep them OFF the visible table, in hidden helper columns to the
+    # far right (beyond the canvas), written as formulas that read each row's own
+    # source date cell so they stay aligned even after the user sorts or deletes
+    # rows. Everything else — the user's real columns and any category buckets —
+    # stays in the visible table.
+    HELPER_C0 = 22
+    helper_cols = [c for c in ("Date", "Period") if c in df.columns]
+    display_cols = [c for c in df.columns if c not in helper_cols]
+
+    def _col_meta(col):
         s = df[col]
-        if col in date_cols:
-            code = None
-        elif _is_number_series(s):
+        if _is_number_series(s):
             looks_money = any(k in col.lower() for k in ("salary", "pay", "wage", "amount", "cost", "net", "gross"))
-            code = _fmt_code("money", currency) if looks_money else _fmt_code("float" if s.dropna().mod(1).any() else "int", currency)
-        else:
-            code = None
-        col_meta.append(code)
+            return _fmt_code("money", currency) if looks_money else _fmt_code("float" if s.dropna().mod(1).any() else "int", currency)
+        return None
 
     # Section banner just above the table.
     f_data_h = wb.add_format({**base_font, "font_size": 12, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "valign": "vcenter", "indent": 1})
-    ws.merge_range(DATA_R0 - 2, 1, DATA_R0 - 2, max(2, min(ncols, 12)),
+    ws.merge_range(DATA_R0 - 2, 1, DATA_R0 - 2, max(2, min(len(display_cols), 12)),
                    "YOUR DATA  —  edit cells, add rows at the bottom, or delete rows; the dashboard above updates live", f_data_h)
     ws.set_row(DATA_R0 - 2, 22)
 
-    # Write the table body at the DATA_R0 offset (add_table writes the header row).
-    table_cols = [{"header": str(c), "header_format": f_hdr} for c in df.columns]
-    for ci, col in enumerate(df.columns):
-        is_date = col in date_cols
-        cc = DATA_C0 + ci
+    # Visible table body (display columns only). add_table writes the header row.
+    table_cols = [{"header": str(c), "header_format": f_hdr} for c in display_cols]
+    for di, col in enumerate(display_cols):
+        cc = DATA_C0 + di
+        code = _col_meta(col)
+        src_i = list(df.columns).index(col)
         for ri in range(nrows):
-            v = df.iat[ri, ci]
+            v = df.iat[ri, src_i]
             rr = DATA_R0 + 1 + ri
             if pd.isna(v):
                 ws_data.write_blank(rr, cc, None, f_cell)
-            elif is_date:
-                ws_data.write_datetime(rr, cc, dt.datetime(v.year, v.month, v.day), date_cell_fmt)
-            elif col_meta[ci]:
-                ws_data.write_number(rr, cc, float(v), num_format(col_meta[ci]))
+            elif code:
+                ws_data.write_number(rr, cc, float(v), num_format(code))
             else:
                 ws_data.write(rr, cc, (v.item() if hasattr(v, "item") else v), f_cell)
     last_row = max(1, nrows)
-    ws_data.add_table(DATA_R0, DATA_C0, DATA_R0 + last_row, DATA_C0 + ncols - 1,
+    ws_data.add_table(DATA_R0, DATA_C0, DATA_R0 + last_row, DATA_C0 + len(display_cols) - 1,
                       {"columns": table_cols, "name": "DataTbl", "style": "Table Style Medium 2",
                        "autofilter": True, "header_row": True})
 
+    # Hidden helper columns: Date (= DATEVALUE of the source date cell) and Period
+    # (= its YYYY-MM). Formulas reference the same physical row, with a buffer of
+    # extra rows so rows the user adds still derive a Date/Period.
+    if helper_cols and src_date_col in display_cols:
+        hd_letter = xl_col_to_name(DATA_C0 + display_cols.index(src_date_col))
+        d_idx = df.columns.get_loc("Date") if "Date" in df.columns else None
+        p_idx = df.columns.get_loc("Period") if "Period" in df.columns else None
+        buf = 500
+        for hi, name in enumerate(helper_cols):
+            hc = HELPER_C0 + hi
+            ws.set_column(hc, hc, 12, None, {"hidden": True})
+        for ri in range(nrows + buf):
+            rr = DATA_R0 + 1 + ri
+            src_cell = f"${hd_letter}${rr + 1}"
+            if "Date" in helper_cols:
+                dc = HELPER_C0 + helper_cols.index("Date")
+                cached = None
+                if ri < nrows and d_idx is not None:
+                    v = df.iat[ri, d_idx]
+                    cached = None if pd.isna(v) else float((v - dt.date(1899, 12, 30)).days)
+                ws.write_formula(rr, dc, f'=IFERROR(DATEVALUE({src_cell}),"")', date_cell_fmt, cached if cached is not None else "")
+            if "Period" in helper_cols:
+                pc = HELPER_C0 + helper_cols.index("Period")
+                d_ref = f"${xl_col_to_name(HELPER_C0 + helper_cols.index('Date'))}${rr + 1}" if "Date" in helper_cols else src_cell
+                cached = ""
+                if ri < nrows and p_idx is not None:
+                    pv = df.iat[ri, p_idx]
+                    cached = "" if pd.isna(pv) else str(pv)
+                ws.write_formula(rr, pc, f'=IF({d_ref}="","",TEXT({d_ref},"yyyy-mm"))', None, cached)
+
     def col_range(col):
-        """Auto-expanding A1 range for a data column on the Dashboard sheet, e.g.
-        Dashboard!$C$92:$C$1048576. Starts at the table's first body row (so the
-        header text is never in the range) and runs to the last Excel row, so rows
-        the user ADDS, EDITS or DELETES recompute the whole board live. Canvas
-        content above DATA_BODY in the same column is excluded by the start row."""
-        ci = list(df.columns).index(col)
-        letter = xl_col_to_name(DATA_C0 + ci)
+        """Auto-expanding A1 range for a column, e.g. Dashboard!$C$96:$C$1048576.
+        Real columns live in the visible table; Date/Period live in the hidden
+        helper columns. The range starts at the table's first body row (so no
+        header is caught) and runs to the last Excel row, so rows the user ADDS,
+        EDITS or DELETES recompute the whole board live."""
+        if col in helper_cols:
+            letter = xl_col_to_name(HELPER_C0 + helper_cols.index(col))
+        else:
+            letter = xl_col_to_name(DATA_C0 + display_cols.index(col))
         return f"Dashboard!${letter}${DATA_BODY}:${letter}${MAX_DATA_ROW}"
 
     per_range = col_range(period_col) if period_col else None
