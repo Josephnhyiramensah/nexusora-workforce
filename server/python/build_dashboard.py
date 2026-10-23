@@ -160,6 +160,93 @@ def _linreg_project(y, ahead):
     return [float(max(0.0, slope * (k + i) + intercept)) for i in range(ahead)]
 
 
+def _glyph_png(name, color, px=96):
+    """Draw a small, crisp KPI-card glyph as an in-memory PNG, tinted to `color`.
+
+    Best-effort: needs Pillow. If Pillow is missing (or drawing fails) we return
+    None and the caller simply omits the icon — the card still renders fully.
+    Supersampled ×4 then downscaled for clean anti-aliased edges.
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except Exception:
+        return None
+    try:
+        import io as _io
+        S = 4
+        W = px * S
+        img = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        c = color.lstrip("#")
+        rgb = tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+        fill = rgb + (255,)
+        soft = rgb + (70,)
+        lw = max(2, int(W * 0.06))
+
+        def circle(cx, cy, r, f):
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=f)
+
+        if name == "people":
+            # two overlapping person silhouettes (headcount)
+            for dx, a in ((-0.17, soft), (0.17, fill)):
+                hx = W * (0.5 + dx)
+                circle(hx, W * 0.34, W * 0.14, a)
+                d.pieslice([hx - W * 0.22, W * 0.46, hx + W * 0.22, W * 0.86], 180, 360, fill=a)
+        elif name == "money":
+            # coin with a currency tick (salary / payroll)
+            circle(W * 0.5, W * 0.5, W * 0.36, soft)
+            d.ellipse([W * 0.5 - W * 0.36, W * 0.5 - W * 0.36, W * 0.5 + W * 0.36, W * 0.5 + W * 0.36],
+                      outline=fill, width=lw)
+            d.line([(W * 0.5, W * 0.26), (W * 0.5, W * 0.74)], fill=fill, width=lw)
+            d.arc([W * 0.36, W * 0.30, W * 0.64, W * 0.52], 20, 200, fill=fill, width=lw)
+            d.arc([W * 0.36, W * 0.48, W * 0.64, W * 0.70], 200, 380, fill=fill, width=lw)
+        elif name == "percent":
+            # percent sign (ratio / attrition)
+            r = W * 0.11
+            circle(W * 0.33, W * 0.33, r, fill)
+            circle(W * 0.67, W * 0.67, r, fill)
+            d.line([(W * 0.72, W * 0.26), (W * 0.28, W * 0.74)], fill=fill, width=lw)
+        elif name == "grid":
+            # 2×2 tiles (distinct categories)
+            g = W * 0.08
+            s = (W - 3 * g - 2 * (W * 0.16)) / 1  # not used; explicit boxes below
+            boxes = [(0.20, 0.20), (0.52, 0.20), (0.20, 0.52), (0.52, 0.52)]
+            for i, (bx, by) in enumerate(boxes):
+                d.rounded_rectangle([W * bx, W * by, W * (bx + 0.28), W * (by + 0.28)],
+                                    radius=W * 0.04, fill=(fill if i in (0, 3) else soft))
+        else:  # "trend" — upward line + arrow
+            pts = [(W * 0.18, W * 0.70), (W * 0.40, W * 0.52), (W * 0.58, W * 0.60), (W * 0.82, W * 0.30)]
+            d.line(pts, fill=fill, width=lw, joint="curve")
+            d.polygon([(W * 0.82, W * 0.30), (W * 0.70, W * 0.30), (W * 0.82, W * 0.42)], fill=fill)
+
+        img = img.resize((px, px), Image.LANCZOS)
+        buf = _io.BytesIO()
+        img.save(buf, "PNG")
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
+
+def _icon_for_kpi(kpi):
+    """Pick a glyph name for a KPI card: explicit `icon`, else inferred."""
+    ic = (kpi.get("icon") or "").strip().lower()
+    if ic in ("people", "money", "percent", "grid", "trend"):
+        return ic
+    agg = (kpi.get("agg") or "count").lower()
+    fmt = (kpi.get("format") or "").lower()
+    if agg == "ratio" or fmt == "pct":
+        return "percent"
+    if fmt in ("money", "money2") or any(k in str(kpi.get("label", "")).lower()
+                                         for k in ("salary", "pay", "cost", "payroll", "wage")):
+        return "money"
+    if agg == "distinct":
+        return "grid"
+    if agg in ("sum", "mean"):
+        return "trend"
+    return "people"
+
+
 def _fmt_code(kind, currency):
     cur = (currency or "").upper()
     sym = {"USD": "$", "GHS": "GH₵ ", "NGN": "₦", "EUR": "€", "GBP": "£", "KES": "KSh ",
@@ -587,6 +674,215 @@ def build(job):
         }
         an_row += 2
 
+    # (C) Gauge charts — single-value half-doughnut gauges. The value is live
+    #     (COUNTIFS/SUMIFS under the active filters); the target is a fixed
+    #     reference denominator, so the gauge reads as a share-of-target. The
+    #     doughnut's three cells (value, remainder, hidden bottom half) and the
+    #     centred percentage are all cell-driven, so each gauge recomputes live.
+    def _lerp_color(a, b, t):
+        a = a.lstrip("#"); b = b.lstrip("#")
+        ar = [int(a[i:i + 2], 16) for i in (0, 2, 4)]
+        br = [int(b[i:i + 2], 16) for i in (0, 2, 4)]
+        return "#" + "".join(f"{int(round(ar[i] + (br[i] - ar[i]) * t)):02X}" for i in range(3))
+
+    def _gauge_value_formula(gg):
+        if not has_filters:
+            return None
+        agg = (gg.get("agg") or "ratio").lower()
+        field = gg.get("field")
+        fR = col_range(field) if field in df.columns else None
+        sfx = crit_suffix("full")
+        if not sfx:
+            return None
+        if agg == "count":
+            return f'=COUNTIFS({sfx[1:]})'
+        if agg in ("sum", "mean") and fR:
+            fn = "SUMIFS" if agg == "sum" else "AVERAGEIFS"
+            return f'=IFERROR({fn}({fR}{sfx}),0)'
+        if agg == "ratio" and fR:
+            m = gg.get("match")
+            return f'=IFERROR(COUNTIFS({fR},"{m}"{sfx})/COUNTIFS({sfx[1:]}),0)'
+        return None  # distinct → cached only
+
+    gauge_specs = []
+    for gg in (spec.get("gauges") or [])[:4]:
+        agg = (gg.get("agg") or "ratio").lower()
+        field = gg.get("field")
+        if agg in ("sum", "mean", "ratio") and field not in df.columns:
+            warnings.append(f"gauge '{gg.get('title')}': field '{field}' missing")
+            continue
+        cached_val = _kpi_value(df, gg, warnings)
+        if gg.get("max") is not None:
+            try:
+                target = float(gg["max"])
+            except Exception:
+                target = 0.0
+        elif agg == "ratio":
+            target = 1.0
+        elif agg == "count":
+            target = float(len(df))
+        elif agg == "distinct":
+            target = float(df[field].nunique(dropna=True)) if field in df.columns else 1.0
+        elif agg == "sum":
+            target = float(pd.to_numeric(df[field], errors="coerce").sum())
+        else:  # mean
+            target = float(pd.to_numeric(df[field], errors="coerce").max())
+        if not target or target <= 0:
+            target = 1.0
+        frac = max(0.0, min(1.0, (cached_val / target) if target else 0.0))
+        is_pct = agg == "ratio" or (gg.get("format") or "").lower() == "pct"
+        val_code = _fmt_code(gg.get("format") or ("pct" if is_pct else "int"), currency)
+        # Band colour: pick by fraction if bands given, else interpolate accent→primary.
+        gcolor = None
+        for band in (gg.get("bands") or []):
+            try:
+                if frac <= float(band.get("upto", 1)):
+                    gcolor = band.get("color"); break
+            except Exception:
+                pass
+        if not gcolor:
+            gcolor = accent  # default arc: accent keeps the navy centre number legible
+
+        ws_an.write(an_row, 0, gg.get("title") or "Gauge", f_section)
+        an_row += 1
+        # Vertical mini-table — the doughnut reads a single COLUMN (value,
+        # remainder, hidden). A column range is the pattern LibreOffice reliably
+        # re-renders on recalc; a horizontal 1-row range is cached and goes stale.
+        gfmt = num_format(val_code)
+        vrow, rrow, hrow_, drow2 = an_row, an_row + 1, an_row + 2, an_row + 3
+        ev, eh, ed = vrow + 1, hrow_ + 1, drow2 + 1  # 1-based Excel rows
+        vf = _gauge_value_formula(gg)
+        ws_an.write(vrow, 0, "Value", f_cell)
+        if vf:
+            ws_an.write_formula(vrow, 1, vf, gfmt, cached_val)
+        else:
+            ws_an.write_number(vrow, 1, cached_val, gfmt)
+        ws_an.write(rrow, 0, "Remainder", f_cell)
+        ws_an.write_formula(rrow, 1, f"=MAX(0,$B${eh}-$B${ev})", gfmt, max(0.0, target - cached_val))
+        ws_an.write(hrow_, 0, "Hidden", f_cell)
+        ws_an.write_number(hrow_, 1, target, gfmt)
+        ws_an.write(drow2, 0, "Display", f_cell)
+        ws_an.write_formula(drow2, 1, f'=TEXT(IFERROR($B${ev}/$B${eh},0),"0.0%")',
+                            wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": primary}),
+                            f"{frac*100:.1f}%")
+        an_row = drow2 + 2  # past the block + a spacer
+        gauge_specs.append({
+            "title": gg.get("title") or "Gauge",
+            "cats_ref": f"=Analysis!$A${ev}:$A${eh}",      # Value/Remainder/Hidden labels
+            "series_ref": f"=Analysis!$B${ev}:$B${eh}",   # value, remainder, hidden (column)
+            "display_ref": f"=Analysis!$B${ed}",
+            "cached_pct": f"{frac*100:.1f}%",
+            "color": gcolor,
+        })
+
+    # (D) Funnel / pyramid — centred stacked bars. A transparent spacer centres
+    #     each stage's coloured bar; spacer and value are both formulas, so the
+    #     shape recomputes under the filters. Funnel = measure per stage (widest
+    #     on top); pyramid = share-of-total per level (base widest at the bottom).
+    centered_specs = []
+    for mode, cfg in (("funnel", spec.get("funnel")), ("pyramid", spec.get("pyramid"))):
+        if not cfg:
+            continue
+        by = cfg.get("by")
+        agg = (cfg.get("agg") or "count").lower()
+        field = cfg.get("field")
+        if by not in df.columns:
+            warnings.append(f"{mode} '{cfg.get('title')}': dimension '{by}' missing")
+            continue
+        if mode == "pyramid" and agg == "mean":
+            agg = "count"
+        if agg in ("sum", "mean") and field not in df.columns:
+            warnings.append(f"{mode} '{cfg.get('title')}': field '{field}' missing")
+            continue
+        g2 = df.copy()
+        g2[by] = g2[by].astype(object).where(g2[by].notna(), "Unknown").astype(str)
+        if agg == "count":
+            order = g2.groupby(by).size()
+        else:
+            g2[field] = pd.to_numeric(g2[field], errors="coerce")
+            order = g2.groupby(by)[field].agg(agg)
+        order = order.sort_values(ascending=False)
+        cats = [str(x) for x in order.index]
+        explicit = cfg.get("stages") or cfg.get("order")
+        if isinstance(explicit, list) and explicit:
+            present = set(cats)
+            cats = [str(s) for s in explicit if str(s) in present]
+        cats = cats[: int(cfg.get("top") or 8)]
+        # Largest first → largest at the BOTTOM (pyramid base). Funnel reverses
+        # the category axis so largest reads at the TOP.
+        cats = sorted(cats, key=lambda c: float(order.get(c, 0)), reverse=True)
+        if not cats:
+            continue
+        byR = col_range(by)
+        fR = col_range(field) if field in df.columns else None
+        share = (mode == "pyramid") or bool(cfg.get("asShare"))
+        code = _fmt_code("pct", currency) if share else _fmt_code(
+            cfg.get("format") or ("money" if agg == "sum" and fR else "int"), currency)
+        vfmt = num_format(code)
+        spfmt = num_format(_fmt_code("float", currency))
+        cvals = {}
+        for cat in cats:
+            if agg == "count":
+                cvals[cat] = float((g2[by] == cat).sum())
+            elif agg == "sum":
+                cvals[cat] = float(pd.to_numeric(g2[g2[by] == cat][field], errors="coerce").sum())
+            else:
+                _s = pd.to_numeric(g2[g2[by] == cat][field], errors="coerce")
+                cvals[cat] = float(_s.mean()) if _s.notna().any() else 0.0
+        denom = sum(cvals.values()) or 1.0
+        ws_an.write(an_row, 0, cfg.get("title") or f"{by} {mode}", f_section)
+        an_row += 1
+        for j, h in enumerate(["Stage", "Spacer", "Value"]):
+            ws_an.write(an_row, j, h, f_hdr)
+        an_row += 1
+        ds = an_row
+        de = ds + len(cats) - 1
+        valrng = f"$C${ds + 1}:$C${de + 1}"
+        sfx = crit_suffix("full")
+        live = has_filters and agg in ("count", "sum", "mean")
+        for cat in cats:
+            er2 = an_row + 1
+            aref = f"$A${er2}"
+            ws_an.write(an_row, 0, cat, f_cell)
+            cv = cvals[cat]
+            disp = (cv / denom) if share else cv
+            # Value (col C): live where possible, else cached.
+            if live and share and agg == "count":
+                f = f'=IFERROR(COUNTIFS({byR},{aref}{sfx})/COUNTIFS({sfx[1:]}),0)'
+            elif live and share and agg == "sum":
+                f = f'=IFERROR(SUMIFS({fR},{byR},{aref}{sfx})/SUMIFS({fR}{sfx}),0)'
+            elif live and agg == "count":
+                f = f'=COUNTIFS({byR},{aref}{sfx})'
+            elif live and agg == "sum":
+                f = f'=SUMIFS({fR},{byR},{aref}{sfx})'
+            elif live and agg == "mean":
+                f = f'=IFERROR(AVERAGEIFS({fR},{byR},{aref}{sfx}),0)'
+            else:
+                f = None
+            # Spacer (col B): centres the bar; recomputes from the live value column.
+            sp = f"=(MAX({valrng})-$C${er2})/2"
+            sp_cached = (max(cvals.values()) - cv) / 2 if cvals else 0.0
+            ws_an.write_formula(an_row, 1, sp, spfmt, sp_cached)
+            if f is not None:
+                ws_an.write_formula(an_row, 2, f, vfmt, disp)
+            else:
+                ws_an.write_number(an_row, 2, disp, vfmt)
+            an_row += 1
+        # Colour ramp: funnel accent→primary; pyramid a warm triangular ramp.
+        n = len(cats)
+        colors = [_lerp_color(accent, primary, (i / (n - 1)) if n > 1 else 0) for i in range(n)]
+        centered_specs.append({
+            "title": cfg.get("title") or f"{by} {mode}",
+            "mode": mode,
+            "cats": f"=Analysis!$A${ds + 1}:$A${de + 1}",
+            "spacer": f"=Analysis!$B${ds + 1}:$B${de + 1}",
+            "vals": f"=Analysis!$C${ds + 1}:$C${de + 1}",
+            "colors": colors,
+            "code": code,
+            "reverse": (mode == "funnel"),
+        })
+        an_row += 2
+
     # ---------- CORRELATION MATRIX sheet ---------- #
     # Pearson r across numeric columns with enough data and variation. Heat-map
     # styled so relationships read at a glance. Pairwise-complete (pandas .corr).
@@ -952,6 +1248,13 @@ def build(job):
             ws.write_formula(KPI_VAL, c0, vf, val_fmt, cached)
         else:
             ws.write_number(KPI_VAL, c0, cached, val_fmt)
+        # Small brand-tinted glyph, top-right of the card. Best-effort: if Pillow
+        # is unavailable the card renders fine without it.
+        _ic = _glyph_png(_icon_for_kpi(kpi), primary)
+        if _ic is not None:
+            ws.insert_image(KPI_LAB, c0 + span - 1, "kpi_icon.png", {
+                "image_data": _ic, "x_scale": 0.24, "y_scale": 0.24,
+                "x_offset": 38, "y_offset": 2, "object_position": 1})
         # Delta row: "vs prev N" (left) + colored ▲/▼ % (right), both live.
         ex = _kpi_period_exprs(kpi)
         if ex:
@@ -974,23 +1277,62 @@ def build(job):
     ws.set_row(KPI_VAL, 28)
     ws.set_row(KPI_DLT, 15)
 
+    # ---- KEY RATIOS band: half-doughnut gauges (value / target), live. ----
+    gauge_band_h = 0
+    if gauge_specs:
+        g0 = KPI_DLT + 2
+        ws.write(g0, 1, "KEY RATIOS", f_section)
+        grow = g0 + 1
+        f_gcap = wb.add_format({**base_font, "font_size": 9, "bold": True, "font_color": "#5B6B86", "align": "center", "valign": "vcenter"})
+        # Big centred number: a transparent cell drawn UNDER the gauge hole, not the
+        # chart title. A linked-cell chart title is frozen to its cache by some
+        # renderers; a worksheet cell is always live and shows through the (no-fill)
+        # chart hole.
+        f_gnum = wb.add_format({**base_font, "font_size": 20, "bold": True, "font_color": primary, "align": "center", "valign": "vcenter"})
+        for gi, gs in enumerate(gauge_specs[:4]):
+            gc = 1 + gi * 3
+            ws.merge_range(grow, gc, grow, gc + 2, gs["title"].upper(), f_gcap)
+            ch = wb.add_chart({"type": "doughnut"})
+            ch.add_series({
+                "categories": gs["cats_ref"],
+                "values": gs["series_ref"],
+                "points": [{"fill": {"color": gs["color"]}, "border": {"none": True}},
+                           {"fill": {"color": "#E7ECF5"}, "border": {"none": True}},
+                           {"fill": {"none": True}, "border": {"none": True}}],
+            })
+            ch.set_rotation(270)
+            ch.set_hole_size(74)
+            ch.set_legend({"position": "none"})
+            ch.set_chartarea({"border": {"none": True}, "fill": {"none": True}})
+            ch.set_plotarea({"border": {"none": True}, "fill": {"none": True}})
+            ch.set_size({"width": 215, "height": 205})
+            ws.insert_chart(grow + 1, gc, ch)
+            # Live % centred in the hole (row ~ middle of the chart's span).
+            ws.merge_range(grow + 6, gc, grow + 6, gc + 2, "", f_gnum)
+            ws.write_formula(grow + 6, gc, gs["display_ref"], f_gnum, gs["cached_pct"])
+            charts_added += 1
+        gauge_band_h = 2 + 11  # section label + caption row + chart rows
+
     # ---- Tiles: native interactive charts + a conditional-format table, all
     #      sourced from the selector-driven Analysis ranges so they move together. ----
-    charts_start = KPI_DLT + 2
+    charts_start = KPI_DLT + 2 + gauge_band_h
     ws.write(charts_start, 1, "BREAKDOWNS", f_section)
     palette = [accent, primary, "#1f9d57", "#c77700", "#7c5cdf", "#17a2b8", "#e5484d", "#0b6fd6"]
     TILE_W, TILE_H = 6, 16          # 2 tiles per 12-column row
     tile_row0 = charts_start + 1
 
     # Assemble tiles in a display order so the canvas reads like a BI board.
-    prio = {"pie": 0, "combo": 1, "stacked": 2, "column": 3, "bar": 4, "line": 5, "table": 6}
+    prio = {"pie": 0, "funnel": 1, "combo": 2, "pyramid": 3, "stacked": 4,
+            "column": 5, "bar": 6, "line": 7, "table": 8}
     tiles = []
     if combo_spec:
         tiles.append((prio["combo"], "combo", combo_spec))
     for cs in chart_specs:
-        tiles.append((prio.get(cs["type"], 3), "chart", cs))
+        tiles.append((prio.get(cs["type"], 5), "chart", cs))
     for ss in stacked_specs:
         tiles.append((prio["stacked"], "stacked", ss))
+    for cspec in centered_specs:
+        tiles.append((prio.get(cspec["mode"], 2), cspec["mode"], cspec))
     stt = spec.get("statusTable") or {}
     if stt and stt.get("by") in df.columns and stt.get("field") in df.columns:
         tiles.append((prio["table"], "table", stt))
@@ -1091,6 +1433,29 @@ def build(job):
             colc.set_y_axis({"num_font": {"name": "Arial", "size": 8}})
             colc.set_y2_axis({"num_font": {"name": "Arial", "size": 8}})
             ws.insert_chart(r, c, colc)
+            charts_added += 1
+        elif kind in ("funnel", "pyramid"):
+            chart = wb.add_chart({"type": "bar", "subtype": "stacked"})
+            # Transparent spacer centres each bar; the coloured value carries labels.
+            chart.add_series({"categories": spc["cats"], "values": spc["spacer"],
+                              "fill": {"none": True}, "border": {"none": True}, "gap": 40})
+            chart.add_series({
+                "categories": spc["cats"], "values": spc["vals"],
+                "points": [{"fill": {"color": col}, "border": {"none": True}} for col in spc["colors"]],
+                "gap": 40,
+                "data_labels": {"value": True, "num_format": spc["code"],
+                                "font": {"name": "Arial", "size": 8, "color": primary}},
+            })
+            chart.set_title({"name": spc["title"], "name_font": {"name": "Arial", "size": 11, "bold": True, "color": primary}})
+            chart.set_legend({"position": "none"})
+            # For a bar chart the renderer puts the category axis on the left
+            # (y_axis) and the value axis on the bottom (x_axis). Keep category
+            # labels (reversed for a funnel so the widest reads on top); hide the
+            # value axis and zero-base it so the centring holds.
+            chart.set_y_axis({"reverse": spc["reverse"], "num_font": {"name": "Arial", "size": 9, "color": primary}})
+            chart.set_x_axis({"visible": False, "min": 0, "major_gridlines": {"visible": False}})
+            chart.set_size({"width": 430, "height": 300})
+            ws.insert_chart(r, c, chart)
             charts_added += 1
         elif kind == "table":
             _render_status_table(r, c, spc)

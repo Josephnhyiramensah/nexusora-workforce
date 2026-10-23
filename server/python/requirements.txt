@@ -9,6 +9,10 @@ pandas>=2.0
 numpy>=1.24
 XlsxWriter>=3.1
 openpyxl>=3.1
+# KPI-card glyphs on the dashboard (little people/money/percent icons). The
+# engine draws them with Pillow; if Pillow is absent the icons are simply
+# skipped and every card still renders, so this is recommended, not mandatory.
+Pillow>=10.0
 # Data Scientist sandbox (Workforce Intelligence): Claude-written analysis runs
 # in server/python/sandbox_runner.py. These power regression/clustering, stats
 # tests and chart rendering. The sandbox degrades gracefully if any are absent
