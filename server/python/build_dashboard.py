@@ -54,6 +54,10 @@ import datetime as dt
 import pandas as pd
 from xlsxwriter.utility import xl_col_to_name, xl_rowcol_to_cell
 
+# Last row of an Excel worksheet. Live formulas reference each data column down
+# to this row (from row 2) so added/edited/deleted rows recompute automatically.
+MAX_DATA_ROW = 1048576
+
 
 # --------------------------------------------------------------------------- #
 #  Helpers
@@ -458,12 +462,32 @@ def build(job):
                       {"columns": table_cols, "name": "DataTbl", "style": "Table Style Medium 2",
                        "autofilter": True, "header_row": True})
     ws_data.freeze_panes(1, 0)
+    # This sheet is the live entry surface: a short banner to the right of the
+    # table tells users they can edit it directly and the Dashboard follows.
+    note_c = ncols + 1
+    f_entry_h = wb.add_format({**base_font, "font_size": 11, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "valign": "vcenter", "indent": 1})
+    f_entry_b = wb.add_format({**base_font, "font_size": 9, "font_color": "#16233b", "text_wrap": True, "valign": "top", "bg_color": "#F1F6FD", "border": 1, "border_color": "#E3EAF5"})
+    ws_data.set_column(note_c, note_c, 2)
+    ws_data.set_column(note_c + 1, note_c + 1, 40)
+    ws_data.write(0, note_c + 1, "This is your live data", f_entry_h)
+    ws_data.merge_range(1, note_c + 1, 4, note_c + 1,
+                        "Add a row at the bottom, edit any cell, or delete a row — the Dashboard's "
+                        "KPIs, gauges and charts recalculate automatically. Keep the column headers as "
+                        "they are so the formulas keep matching.", f_entry_b)
 
     def col_range(col):
-        """A1 range for a data column body, e.g. Data!$C$2:$C$101."""
+        """A1 range for a data column that AUTO-EXPANDS: Data!$C$2:$C$1048576.
+
+        Starts at row 2 (so the header text is never in the range) and runs to
+        the last Excel row. Every live formula (KPIs, charts, gauges, funnel,
+        pyramid, tables) is built from these ranges, so rows the user ADDS,
+        EDITS or DELETES in the Data table recompute the whole board — no
+        regeneration needed. Header-safe: "Department" never matches a category,
+        a "*" wildcard (text only, header excluded by the row-2 start), or a
+        numeric date criterion; blank trailing rows match nothing and sum to 0."""
         ci = list(df.columns).index(col)
         letter = xl_col_to_name(ci)
-        return f"Data!${letter}${2}:${letter}${last_row + 1}"
+        return f"Data!${letter}$2:${letter}${MAX_DATA_ROW}"
 
     per_range = col_range(period_col) if period_col else None
 
