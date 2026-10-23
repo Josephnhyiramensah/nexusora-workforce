@@ -35,7 +35,12 @@ export function AuthProvider({ children }) {
       try {
         const { data } = await api.get('/auth/me');
         if (active) { setUser(data.user); setTenant(data.tenant); }
-      } catch (e) { setToken(null); }
+      } catch (e) {
+        // Only end the session on a genuine auth failure (401). A transient error
+        // — rate-limit (429), network blip, 5xx — must NOT log the user out;
+        // keep the token so the next call can rehydrate the session.
+        if (e?.response?.status === 401) setToken(null);
+      }
       finally { if (active) setLoading(false); }
     })();
     return () => { active = false; };
