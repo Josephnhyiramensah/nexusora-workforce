@@ -430,7 +430,7 @@ def build(job):
     ws.set_column("A:A", 2)
     ncols = len(df.columns)
     nrows = len(df)
-    for _c in range(1, max(14, ncols + 2)):
+    for _c in range(1, max(18, ncols + 2)):   # cols B..R cover the left panel + content band
         ws.set_column(_c, _c, 14)
     ws_tr = ws_rt = None   # optional deep-dive sheets (hidden if built)
 
@@ -503,17 +503,25 @@ def build(job):
     # the Dashboard sheet at fixed addresses; each live formula AND-combines them as
     # COUNTIFS/SUMIFS criteria, so the whole board recomputes when any one changes.
     # A slicer set to "(All)" contributes the "*" wildcard (matches every category).
-    SLICER_ROW = 4                       # dropdowns sit on this row (Excel row 5)
-    DATE_ROW = 5                         # From/To date cells (Excel row 6)
+    # ---- Left filter PANEL geometry (slicers stacked down cols B–D, like the
+    #      sample boards). The main content (KPIs, gauges, charts) starts at MC. ----
+    MC = 4                               # main content first column (E, 0-based 4)
+    PANEL_C0, PANEL_C1 = 1, 3            # panel spans columns B..D
+    PANEL_VAL_C = 1                      # slicer/date VALUE cell column (B), merged B..D
+    SLICER_TOP = 7                       # first slicer value row (0-based) → Excel row 8
+    SLICER_STEP = 3                      # rows per slicer (label + value + gap)
+    _n_sl = len(slicer_cols)
+    DATE_FROM_ROW = SLICER_TOP + _n_sl * SLICER_STEP + 1
+    DATE_TO_ROW = DATE_FROM_ROW + 3
 
     def _slicer_cell(i, scope="local"):
-        col = 2 + i * 3                  # value cell column for slicer i
-        ref = f"${xl_col_to_name(col)}${SLICER_ROW + 1}"
+        r = SLICER_TOP + i * SLICER_STEP
+        ref = f"${xl_col_to_name(PANEL_VAL_C)}${r + 1}"
         return (f"Dashboard!{ref}" if scope == "full" else ref)
 
     def _date_cell(which, scope="local"):
-        col = 2 if which == "from" else 5
-        ref = f"${xl_col_to_name(col)}${DATE_ROW + 1}"
+        r = DATE_FROM_ROW if which == "from" else DATE_TO_ROW
+        ref = f"${xl_col_to_name(PANEL_VAL_C)}${r + 1}"
         return (f"Dashboard!{ref}" if scope == "full" else ref)
 
     def crit_suffix(scope="local", include_date=True):
@@ -1155,35 +1163,38 @@ def build(job):
     # ---------- DASHBOARD CANVAS (same sheet, above the data table) ---------- #
     charts_added = 0
 
-    # Title band (two stacked merged rows — no overlapping ranges)
-    ws.merge_range(1, 1, 1, 12, title, wb.add_format({**base_font, "font_size": 20, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "valign": "vcenter", "indent": 1}))
-    ws.merge_range(2, 1, 2, 12, subtitle, wb.add_format({**base_font, "font_size": 10, "font_color": "#DCE7F7", "bg_color": primary, "valign": "vcenter", "indent": 1}))
+    RIGHT = MC + 4 * 3 - 1               # right edge of the KPI/content band (col P)
+
+    # Title band (full width, two stacked merged rows)
+    ws.merge_range(1, 1, 1, RIGHT, title, wb.add_format({**base_font, "font_size": 20, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "valign": "vcenter", "indent": 1}))
+    ws.merge_range(2, 1, 2, RIGHT, subtitle, wb.add_format({**base_font, "font_size": 10, "font_color": "#DCE7F7", "bg_color": primary, "valign": "vcenter", "indent": 1}))
     ws.set_row(1, 34)
     ws.set_row(2, 18)
 
-    # ---- Filter bar: slicer dropdowns (row 5) + date range (row 6) + nav links ----
-    f_sl_lab = wb.add_format({**base_font, "font_size": 8, "bold": True, "font_color": "#FFFFFF", "bg_color": accent, "align": "center", "valign": "vcenter"})
-    f_sl_val = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": primary, "bg_color": "#FFF8E6", "border": 1, "border_color": "#FFD98A", "align": "center", "valign": "vcenter"})
+    # ---- LEFT FILTER PANEL: slicers stacked down cols B–D (like the samples) ----
+    f_panel_h = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": "#FFFFFF", "bg_color": accent, "align": "left", "valign": "vcenter", "indent": 1})
+    f_sl_lab = wb.add_format({**base_font, "font_size": 8, "bold": True, "font_color": primary, "bg_color": "#EEF3FB", "align": "left", "valign": "vcenter", "indent": 1})
+    f_sl_val = wb.add_format({**base_font, "font_size": 11, "bold": True, "font_color": primary, "bg_color": "#FFF8E6", "border": 1, "border_color": "#FFD98A", "align": "center", "valign": "vcenter"})
+    ws.merge_range(4, PANEL_C0, 5, PANEL_C1, "FILTERS", f_panel_h)
     for i, col in enumerate(slicer_cols):
-        lab_c, val_c = 1 + i * 3, 2 + i * 3
-        ws.write(SLICER_ROW, lab_c, col.upper()[:14], f_sl_lab)
-        ws.merge_range(SLICER_ROW, val_c, SLICER_ROW, val_c + 1, "(All)", f_sl_val)
+        vr = SLICER_TOP + i * SLICER_STEP
+        ws.merge_range(vr - 1, PANEL_C0, vr - 1, PANEL_C1, col.upper()[:24], f_sl_lab)
+        ws.merge_range(vr, PANEL_C0, vr, PANEL_C1, "(All)", f_sl_val)
         values = ["(All)"] + sorted(str(v) for v in df[col].dropna().unique())[:200]
-        ws.data_validation(SLICER_ROW, val_c, SLICER_ROW, val_c, {"validate": "list", "source": values})
-    if slicer_cols:
-        ws.set_row(SLICER_ROW, 20)
+        ws.data_validation(vr, PANEL_VAL_C, vr, PANEL_VAL_C, {"validate": "list", "source": values})
+        ws.set_row(vr, 20)
 
     if date_real_col:
-        f_dlab = wb.add_format({**base_font, "font_size": 8, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "align": "center", "valign": "vcenter"})
+        f_dlab = wb.add_format({**base_font, "font_size": 8, "bold": True, "font_color": "#FFFFFF", "bg_color": primary, "align": "left", "valign": "vcenter", "indent": 1})
         f_dval = wb.add_format({**base_font, "font_size": 10, "bold": True, "font_color": primary, "num_format": "yyyy-mm-dd", "bg_color": "#EEF3FB", "border": 1, "border_color": "#C7D6EC", "align": "center", "valign": "vcenter"})
-        ws.write(DATE_ROW, 1, "FROM", f_dlab)
-        ws.merge_range(DATE_ROW, 2, DATE_ROW, 3, "", f_dval)
-        ws.write_datetime(DATE_ROW, 2, dt.datetime(date_min.year, date_min.month, date_min.day), f_dval)
-        ws.write(DATE_ROW, 4, "TO", f_dlab)
-        ws.merge_range(DATE_ROW, 5, DATE_ROW, 6, "", f_dval)
-        ws.write_datetime(DATE_ROW, 5, dt.datetime(date_max.year, date_max.month, date_max.day), f_dval)
-        ws.write(DATE_ROW, 7, "↳ set a date range", f_note)
-        ws.set_row(DATE_ROW, 18)
+        ws.merge_range(DATE_FROM_ROW - 1, PANEL_C0, DATE_FROM_ROW - 1, PANEL_C1, "DATE FROM", f_dlab)
+        ws.merge_range(DATE_FROM_ROW, PANEL_C0, DATE_FROM_ROW, PANEL_C1, "", f_dval)
+        ws.write_datetime(DATE_FROM_ROW, PANEL_VAL_C, dt.datetime(date_min.year, date_min.month, date_min.day), f_dval)
+        ws.merge_range(DATE_TO_ROW - 1, PANEL_C0, DATE_TO_ROW - 1, PANEL_C1, "DATE TO", f_dlab)
+        ws.merge_range(DATE_TO_ROW, PANEL_C0, DATE_TO_ROW, PANEL_C1, "", f_dval)
+        ws.write_datetime(DATE_TO_ROW, PANEL_VAL_C, dt.datetime(date_max.year, date_max.month, date_max.day), f_dval)
+        ws.set_row(DATE_FROM_ROW, 18)
+        ws.set_row(DATE_TO_ROW, 18)
 
     # ---- KPI cards: big number (live) + vs-previous delta (▲/▼ %) ----
     kpis = (spec.get("kpis") or [{"label": "Total Records", "agg": "count"}])[:4]
@@ -1252,7 +1263,7 @@ def build(job):
         return 0.0
 
     for i, kpi in enumerate(kpis):
-        c0 = 1 + (i % 4) * span
+        c0 = MC + (i % 4) * span
         label = (kpi.get("label") or "").upper()
         agg = (kpi.get("agg") or "count").lower()
         fmt = (kpi.get("format") or ("pct" if agg == "ratio" else "int")).lower()
@@ -1300,7 +1311,7 @@ def build(job):
     gauge_band_h = 0
     if gauge_specs:
         g0 = KPI_DLT + 2
-        ws.write(g0, 1, "KEY RATIOS", f_section)
+        ws.write(g0, MC, "KEY RATIOS", f_section)
         grow = g0 + 1
         f_gcap = wb.add_format({**base_font, "font_size": 9, "bold": True, "font_color": "#5B6B86", "align": "center", "valign": "vcenter"})
         # Big centred number: a transparent cell drawn UNDER the gauge hole, not the
@@ -1309,7 +1320,7 @@ def build(job):
         # chart hole.
         f_gnum = wb.add_format({**base_font, "font_size": 20, "bold": True, "font_color": primary, "align": "center", "valign": "vcenter"})
         for gi, gs in enumerate(gauge_specs[:4]):
-            gc = 1 + gi * 3
+            gc = MC + gi * 3
             ws.merge_range(grow, gc, grow, gc + 2, gs["title"].upper(), f_gcap)
             ch = wb.add_chart({"type": "doughnut"})
             ch.add_series({
@@ -1335,9 +1346,9 @@ def build(job):
     # ---- Tiles: native interactive charts + a conditional-format table, all
     #      sourced from the selector-driven Analysis ranges so they move together. ----
     charts_start = KPI_DLT + 2 + gauge_band_h
-    ws.write(charts_start, 1, "BREAKDOWNS", f_section)
+    ws.write(charts_start, MC, "BREAKDOWNS", f_section)
     palette = [accent, primary, "#1f9d57", "#c77700", "#7c5cdf", "#17a2b8", "#e5484d", "#0b6fd6"]
-    TILE_W, TILE_H = 6, 16          # 2 tiles per 12-column row
+    TILE_W, TILE_H = 6, 16          # 2 tiles per row in the main content band
     tile_row0 = charts_start + 1
 
     # Assemble tiles in a display order so the canvas reads like a BI board.
@@ -1358,7 +1369,7 @@ def build(job):
     tiles.sort(key=lambda t: t[0])
 
     def _place(i):
-        return tile_row0 + (i // 2) * TILE_H, 1 + (i % 2) * TILE_W
+        return tile_row0 + (i // 2) * TILE_H, MC + (i % 2) * TILE_W
 
     def _axes(ch):
         ch.set_x_axis({"num_font": {"name": "Arial", "size": 8}})
@@ -1483,16 +1494,17 @@ def build(job):
 
     # Footer note
     foot = tile_row0 + max(1, tile_rows) * TILE_H
-    ws.write(foot, 1, "Figures are computed from the source data. The dropdown, cards and charts are live — open in Excel and change the filter.", f_note)
+    ws.write(foot, MC, "Figures are computed from the source data. The filter panel, cards and charts are live — open in Excel and change a filter.", f_note)
     if warnings:
-        ws.write(foot + 1, 1, "Notes: " + "; ".join(warnings[:6]), f_note)
+        ws.write(foot + 1, MC, "Notes: " + "; ".join(warnings[:6]), f_note)
 
-    # Single-canvas print / PDF: landscape, scaled to one page.
+    # Single-canvas print / PDF: landscape, scaled to one page (dashboard only;
+    # the editable data table below is for input, not the printed page).
     ws.set_landscape()
     ws.set_paper(8)          # A3 gives the tiled grid room before fit-to-1-page scales it
     ws.fit_to_pages(1, 1)
     ws.set_margins(0.2, 0.2, 0.2, 0.2)
-    ws.print_area(0, 0, foot + 2, 12)
+    ws.print_area(0, 0, foot + 2, RIGHT)
 
     # ---------- AI INSIGHTS sheet (optional, from spec.narrative) ---------- #
     narr = spec.get("narrative") or {}
