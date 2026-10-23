@@ -157,5 +157,44 @@ test('build_dashboard.py renders gauges, funnel and pyramid without warnings', (
   // gauges (2) + funnel + pyramid + breakdowns/combo all render as charts.
   assert.ok(summary.charts >= 4, `expected >=4 charts, got ${summary.charts}`);
   assert.deepEqual(summary.warnings, [], `unexpected warnings: ${JSON.stringify(summary.warnings)}`);
+  // Single visible sheet: the summary reports only "Dashboard".
+  assert.deepEqual(summary.sheets, ['Dashboard'], `expected one visible sheet, got ${JSON.stringify(summary.sheets)}`);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('build produces exactly ONE visible sheet with the editable DataTbl on it', () => {
+  const py = process.env.PYTHON_BIN || 'python3';
+  const script = path.join(__dirname, '..', 'python', 'build_dashboard.py');
+  const probe = spawnSync(py, ['-c', 'import pandas, xlsxwriter, openpyxl'], { encoding: 'utf8' });
+  if (probe.status !== 0) { return; }  // deps absent → skip
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nxw-ss-'));
+  const out = path.join(tmp, 'out.xlsx');
+  const data = [];
+  for (let i = 0; i < 30; i++) {
+    data.push({ Department: ['Eng', 'Sales'][i % 2], Status: i % 4 ? 'Active' : 'Terminated', Salary: 3000 + i * 100 });
+  }
+  const spec = { title: 'SS', selectors: ['Department'],
+    kpis: [{ label: 'HC', agg: 'count' }], breakdowns: [{ title: 'by dept', by: 'Department', agg: 'count' }] };
+  const job = path.join(tmp, 'job.json');
+  fs.writeFileSync(job, JSON.stringify({ output: out, spec, data }));
+  const res = spawnSync(py, [script, job], { encoding: 'utf8' });
+  assert.equal(res.status, 0, `engine exited ${res.status}: ${res.stderr}`);
+
+  // Inspect the workbook: exactly one visible sheet, named Dashboard, and the
+  // editable table (DataTbl) lives on it.
+  const probe2 = `
+import openpyxl, json
+wb = openpyxl.load_workbook("${out}")
+vis = [s.title for s in wb.worksheets if s.sheet_state == "visible"]
+dash = wb["Dashboard"]
+has_tbl = any(t.name == "DataTbl" for t in dash.tables.values())
+print(json.dumps({"visible": vis, "has_tbl": has_tbl}))
+`;
+  const insp = spawnSync(py, ['-c', probe2], { encoding: 'utf8' });
+  assert.equal(insp.status, 0, `openpyxl probe failed: ${insp.stderr}`);
+  const info = JSON.parse(insp.stdout.trim());
+  assert.deepEqual(info.visible, ['Dashboard'], `expected only Dashboard visible, got ${JSON.stringify(info.visible)}`);
+  assert.ok(info.has_tbl, 'editable DataTbl must be on the Dashboard sheet');
   fs.rmSync(tmp, { recursive: true, force: true });
 });
