@@ -69,8 +69,24 @@ app.use((req, res, next) => {
 // response finish, so it reads req.auth/req.tenantConn after the routes set them.
 app.use(require('./middleware/auditTrail').auditTrail);
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
-app.use('/api/auth', authLimiter);
+// Brute-force protection on the CREDENTIAL endpoints only. Applying a tight limit
+// to the whole /api/auth surface throttled high-frequency authenticated calls —
+// /api/auth/me (hit on every page load), profile saves, user admin — surfacing as
+// spurious 429s ("Sign in failed", "Could not save profile", vanishing role-gated
+// UI). Scope it to the public credential routes, and don't count SUCCESSFUL
+// logins — only failed attempts burn the budget, so real users are never locked out.
+const credentialLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { success: false, message: 'Too many attempts. Please wait a few minutes and try again.' },
+});
+for (const p of ['/api/auth/login', '/api/auth/2fa/login', '/api/auth/forgot-password',
+  '/api/auth/reset-password', '/api/auth/verify-email', '/api/auth/resend-verification']) {
+  app.use(p, credentialLimiter);
+}
 
 // Rate-limit the public, API-key-authenticated surface (/api/v1) to curb abuse
 // and key brute-forcing. Keyed per API key (hashed, so raw keys never sit in the
